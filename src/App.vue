@@ -744,7 +744,10 @@ function ticketColor(name: string) {
         </div>
         <section v-else class="backlog-list" aria-label="Backlog tasks">
           <article v-for="task in backlogTasks" :key="task.id" class="backlog-item" :class="ticketColor(task.assignee)" @dblclick="doubleClickTask(task, $event)">
-            <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
+            <div class="backlog-title">
+              <span class="avatar" :class="avatarClass(task.assignee)" role="img" :aria-label="task.assignee ? `Assigned to ${task.assignee}` : 'Unassigned'" :title="task.assignee || 'Unassigned'">{{ initials(task.assignee) }}</span>
+              <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
+            </div>
             <div class="backlog-actions">
               <Button label="Edit" icon="pi pi-pencil" severity="secondary" text :disabled="busy" :aria-label="`Edit ${task.title}`" @click="openTask(task)" />
               <Button label="Move to To do" icon="pi pi-arrow-right" :disabled="busy" :aria-label="`Move ${task.title} to To do`" @click="moveTaskToStatus(task, 'To do')" />
