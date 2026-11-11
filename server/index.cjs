@@ -9,7 +9,7 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 pool.on('error', (error) => console.error('Unexpected database error:', error));
 const port = Number(process.env.PORT || 3000);
-const server = createApp(pool).listen(port, '0.0.0.0', () => console.log(`Orbit listening on port ${port}`));
+const server = createApp(pool).listen(port, '0.0.0.0', () => console.log(`Monster Spirital Company listening on port ${port}`));
 
 function shutdown() {
   server.close(() => pool.end().then(() => process.exit(0), (error) => {

@@ -1,4 +1,4 @@
-# Orbit
+# Monster Spirital Company
 
 A shared task board built with Vue, PrimeVue, TypeScript, a Node.js API, and PostgreSQL.
 

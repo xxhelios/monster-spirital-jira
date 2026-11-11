@@ -405,7 +405,7 @@ function avatarClass(name: string) {
   <div v-if="loading" class="auth-page"><p>Loading your workspace...</p></div>
   <div v-else-if="!username" class="auth-page">
     <div class="auth-card">
-      <div class="brand"><span class="brand-mark"><i class="pi pi-compass"></i></span><span>orbit<span class="brand-dot">.</span></span></div>
+      <div class="brand"><span class="brand-mark"><i class="pi pi-compass"></i></span><span>Monster Spirital Company<span class="brand-dot">.</span></span></div>
       <h1>{{ authMode === 'login' ? 'Welcome back.' : 'Join the workspace.' }}</h1>
       <p>{{ authMode === 'login' ? 'Sign in to see your team’s board.' : 'Create an account to start working together.' }}</p>
       <form class="task-form" @submit.prevent="authenticate">
@@ -422,13 +422,13 @@ function avatarClass(name: string) {
   </div>
   <div v-else class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="#" aria-label="Orbit home">
+      <a class="brand" href="#" aria-label="Monster Spirital Company home">
         <span class="brand-mark"><i class="pi pi-compass"></i></span>
-        <span>orbit<span class="brand-dot">.</span></span>
+        <span>Monster Spirital Company<span class="brand-dot">.</span></span>
       </a>
       <div class="workspace-switcher">
-        <div class="workspace-icon">O</div>
-        <div class="workspace-text"><strong>Orbit Studio</strong><span>Workspace</span></div>
+        <div class="workspace-icon">M</div>
+        <div class="workspace-text"><strong>Monster Spirital Company</strong><span>Workspace</span></div>
         <i class="pi pi-angle-down"></i>
       </div>
       <p class="nav-label">WORKSPACE</p>
