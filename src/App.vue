@@ -484,12 +484,6 @@ async function deleteTask() {
   }
 }
 
-async function moveTask(task: Task, direction: number) {
-  const index = boardStatuses.findIndex((status) => status === task.status);
-  const nextStatus = index === -1 ? undefined : boardStatuses[index + direction];
-  if (nextStatus) await moveTaskToStatus(task, nextStatus);
-}
-
 async function moveTaskToStatus(task: Task, nextStatus: Status) {
   if (task.status === nextStatus) return;
   await updateTask(task, { status: nextStatus });
@@ -712,7 +706,7 @@ function ticketColor(name: string) {
         <template v-else-if="board">
 
         <div class="board-header">
-          <div><h2>{{ activeView === 'board' ? 'Board' : 'Backlog' }} <span class="task-total">{{ activeView === 'board' ? boardTasks.length : tasks.length - boardTasks.length }}</span></h2><p>{{ activeView === 'board' ? 'Drag tasks between columns, or use the arrow buttons to move them.' : 'Move tasks to To do when they are ready to work on.' }}</p></div>
+          <div><h2>{{ activeView === 'board' ? 'Board' : 'Backlog' }} <span class="task-total">{{ activeView === 'board' ? boardTasks.length : tasks.length - boardTasks.length }}</span></h2><p>{{ activeView === 'board' ? 'Drag tasks between columns, or edit their status to move them.' : 'Move tasks to To do when they are ready to work on.' }}</p></div>
           <div class="filters">
             <label class="search-box"><i class="pi pi-search"></i><span class="sr-only">Search tasks</span><input v-model="search" placeholder="Search tasks..." type="search"></label>
             <label class="filter-box"><i class="pi pi-sliders-h"></i><span class="sr-only">Filter by priority</span><select v-model="priorityFilter"><option>All priorities</option><option v-for="priority in priorities" :key="priority">{{ priority }}</option></select><i class="pi pi-angle-down"></i></label>
@@ -733,8 +727,7 @@ function ticketColor(name: string) {
                 <p class="task-description">{{ task.description || 'No description yet.' }}</p>
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
-                  <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="userNames" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
-                  <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < boardStatuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
+                  <span class="avatar" :class="avatarClass(task.assignee)" role="img" :aria-label="task.assignee ? `Assigned to ${task.assignee}` : 'Unassigned'" :title="task.assignee || 'Unassigned'">{{ initials(task.assignee) }}</span>
                 </div>
               </article>
               <div v-if="!filteredTasks.some((task) => task.status === status)" class="empty-column">No tasks here yet.</div>

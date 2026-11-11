@@ -35,10 +35,10 @@ Tasks and their status are shared through PostgreSQL. Workspace lists active pro
 
 Use the Backlog tab to create and collect upcoming tasks. Select **Move to To do** when a task is ready for the board. To return a task to the backlog, edit it and change its status to Backlog. The board's task count and progress exclude backlog tasks.
 
-Assign tasks from the searchable team-member dropdown on a board card or in the task editor. Select Unassigned to clear an assignment. Names entered before this dropdown was added remain visible until changed.
+Assign tasks from the searchable team-member dropdown in the task editor. Select Unassigned to clear an assignment. Names entered before this dropdown was added remain visible until changed.
 
 Double-click a ticket on the board or in the backlog to edit it. You can also select its title or use its edit button. Backlog rows show the assignee avatar, title, and actions; edit a ticket to see its other details.
 
 Click the project name above its Board and Backlog tabs to rename it for everyone. Save with the button, Enter, or by clicking outside; Escape cancels. If someone else changes the name at the same time, review your draft and save again.
 
-The board columns are To do, In progress, In Review, and Done. Drag a task to another column to change its status. On touchscreens, drag using the handle in the task's top-right corner. The arrow buttons provide an alternative for keyboard and touch users. Dragging does not reorder tasks within a column.
+The board columns are To do, In progress, In Review, and Done. Drag a task to another column to change its status. On touchscreens, drag using the handle in the task's top-right corner. Alternatively, open the task editor and change its status. Dragging does not reorder tasks within a column.
