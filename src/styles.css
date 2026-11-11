@@ -133,6 +133,15 @@ h1 { margin-top: 9px; font-size: clamp(29px, 3vw, 37px); font-weight: 800; lette
 .dialog-actions { display: flex; gap: 6px; margin-top: 15px; }
 .actions-spacer { flex: 1; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.auth-card { width: min(100%, 430px); padding: 35px; border: 1px solid #eeeff5; border-radius: 14px; background: white; box-shadow: 0 12px 40px #29294a0a; }
+.auth-card h1 { font-size: 28px; margin-top: 30px; }
+.auth-card > p { margin: 8px 0 24px; font-size: 13px; color: #9093a5; }
+.auth-card .task-form { gap: 12px; }
+.auth-card .task-form small { color: #777b91; line-height: 1.5; }
+.auth-card .task-form .form-error { color: #cc5959; }
+.auth-switch, .logout-button { border: 0; background: transparent; color: #6d5ce6; font-size: 12px; font-weight: 700; }
+.auth-switch { display: block; margin: 20px auto 0; }
 :focus-visible { outline: 2px solid #7869e5; outline-offset: 2px; }
 @media (max-width: 1050px) {
   .sidebar { width: 200px; flex-basis: 200px; }

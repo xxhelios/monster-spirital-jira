@@ -1,33 +1,95 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import Textarea from 'primevue/textarea';
-import { parseTasks, priorities, starterTasks, statuses, type Priority, type Status, type Task } from './tasks';
+import { ApiError, request } from './api';
+import { priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
 
-const storageKey = 'orbit-board-tasks-v1';
 const notice = ref('');
+const username = ref('');
+const authMode = ref<'login' | 'signup'>('login');
+const credentials = reactive({ username: '', password: '' });
+const authError = ref('');
+const authBusy = ref(false);
+const loading = ref(true);
+const tasks = ref<Task[]>([]);
+const busy = ref(false);
+let refreshGeneration = 0;
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-function loadTasks(): Task[] {
-  try {
-    const saved = localStorage.getItem(storageKey);
-    return saved === null ? starterTasks.map((task) => ({ ...task })) : parseTasks(saved);
-  } catch {
-    notice.value = 'Your saved board could not be loaded. Changes may not be saved in this browser.';
-    return starterTasks.map((task) => ({ ...task }));
+function message(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+}
+
+function handleError(error: unknown) {
+  if (error instanceof ApiError && error.status === 401) {
+    username.value = '';
+    tasks.value = [];
+    dialogVisible.value = false;
+    authError.value = error.message;
+  } else {
+    notice.value = message(error);
   }
 }
 
-const tasks = ref<Task[]>(loadTasks());
-watch(tasks, (value) => {
+async function refreshTasks() {
+  const generation = ++refreshGeneration;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(value));
-  } catch {
-    notice.value = 'Your changes could not be saved. Check your browser storage settings.';
+    const result = await request<{ tasks: Task[] }>('/tasks');
+    if (generation === refreshGeneration && username.value) {
+      tasks.value = result.tasks;
+      notice.value = '';
+    }
+  } catch (error) {
+    if (generation === refreshGeneration) handleError(error);
   }
-}, { deep: true });
+}
+
+async function authenticate() {
+  authBusy.value = true;
+  authError.value = '';
+  try {
+    const result = await request<{ user: { username: string } }>(`/auth/${authMode.value}`, { method: 'POST', body: credentials });
+    username.value = result.user.username;
+    credentials.password = '';
+    await refreshTasks();
+  } catch (error) {
+    authError.value = message(error);
+  } finally {
+    authBusy.value = false;
+  }
+}
+
+async function logout() {
+  try {
+    await request('/auth/logout', { method: 'POST', body: {} });
+    ++refreshGeneration;
+    username.value = '';
+    tasks.value = [];
+    notice.value = '';
+  } catch (error) {
+    handleError(error);
+  }
+}
+
+onMounted(async () => {
+  try {
+    const result = await request<{ user: { username: string } }>('/auth/me');
+    username.value = result.user.username;
+    await refreshTasks();
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 401)) authError.value = message(error);
+  } finally {
+    loading.value = false;
+  }
+  refreshTimer = setInterval(() => {
+    if (username.value && !busy.value) void refreshTasks();
+  }, 15000);
+});
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
 const search = ref('');
 const priorityFilter = ref('All priorities');
@@ -42,6 +104,7 @@ const completed = computed(() => tasks.value.filter((task) => task.status === 'D
 const progress = computed(() => tasks.value.length ? Math.round(completed.value / tasks.value.length * 100) : 0);
 const dialogVisible = ref(false);
 const editingId = ref<string | null>(null);
+const editingVersion = ref<number | null>(null);
 const formError = ref('');
 const form = reactive<{ title: string; description: string; status: Status; priority: Priority; assignee: string; label: string }>({
   title: '', description: '', status: 'To do', priority: 'Medium', assignee: '', label: '',
@@ -49,18 +112,19 @@ const form = reactive<{ title: string; description: string; status: Status; prio
 
 function openTask(task?: Task, status: Status = 'To do') {
   editingId.value = task?.id ?? null;
+  editingVersion.value = task?.version ?? null;
   Object.assign(form, task ?? { title: '', description: '', status, priority: 'Medium', assignee: '', label: '' });
   formError.value = '';
   dialogVisible.value = true;
 }
 
-function saveTask() {
+async function saveTask() {
   const title = form.title.trim();
   if (!title) {
     formError.value = 'Give your task a title to continue.';
     return;
   }
-  const details = {
+  const details: TaskDetails = {
     title,
     description: form.description.trim(),
     status: form.status,
@@ -68,30 +132,54 @@ function saveTask() {
     assignee: form.assignee.trim(),
     label: form.label.trim(),
   };
-  if (editingId.value) {
-    const index = tasks.value.findIndex((task) => task.id === editingId.value);
-    if (index === -1) {
-      formError.value = 'This task no longer exists. Close the dialog and try again.';
-      return;
+  busy.value = true;
+  ++refreshGeneration;
+  try {
+    if (editingId.value) {
+      await request(`/tasks/${editingId.value}`, { method: 'PUT', body: { ...details, version: editingVersion.value } });
+    } else {
+      await request('/tasks', { method: 'POST', body: details });
     }
-    tasks.value[index] = { id: editingId.value, ...details };
-  } else {
-    const nextNumber = Math.max(100, ...tasks.value.map((task) => Number(/^ORB-(\d+)$/.exec(task.id)?.[1] ?? 0))) + 1;
-    tasks.value.push({ id: `ORB-${nextNumber}`, ...details });
-  }
-  dialogVisible.value = false;
-}
-
-function deleteTask() {
-  if (editingId.value && window.confirm('Delete this task? This cannot be undone.')) {
-    tasks.value = tasks.value.filter((task) => task.id !== editingId.value);
     dialogVisible.value = false;
+    await refreshTasks();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else formError.value = message(error);
+  } finally {
+    busy.value = false;
   }
 }
 
-function moveTask(task: Task, direction: number) {
+async function deleteTask() {
+  if (editingId.value && window.confirm('Delete this task? This cannot be undone.')) {
+    busy.value = true;
+    ++refreshGeneration;
+    try {
+      await request(`/tasks/${editingId.value}`, { method: 'DELETE', body: { version: editingVersion.value } });
+      dialogVisible.value = false;
+      await refreshTasks();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) handleError(error);
+      else formError.value = message(error);
+    } finally {
+      busy.value = false;
+    }
+  }
+}
+
+async function moveTask(task: Task, direction: number) {
   const nextStatus = statuses[statuses.indexOf(task.status) + direction];
-  if (nextStatus) task.status = nextStatus;
+  if (!nextStatus || busy.value) return;
+  busy.value = true;
+  ++refreshGeneration;
+  try {
+    await request(`/tasks/${task.id}`, { method: 'PUT', body: { ...task, status: nextStatus } });
+    await refreshTasks();
+  } catch (error) {
+    handleError(error);
+  } finally {
+    busy.value = false;
+  }
 }
 
 function initials(name: string) {
@@ -105,7 +193,25 @@ function avatarClass(name: string) {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="loading" class="auth-page"><p>Loading your workspace...</p></div>
+  <div v-else-if="!username" class="auth-page">
+    <div class="auth-card">
+      <div class="brand"><span class="brand-mark"><i class="pi pi-compass"></i></span><span>orbit<span class="brand-dot">.</span></span></div>
+      <h1>{{ authMode === 'login' ? 'Welcome back.' : 'Join the workspace.' }}</h1>
+      <p>{{ authMode === 'login' ? 'Sign in to see your team’s board.' : 'Create an account to start working together.' }}</p>
+      <form class="task-form" @submit.prevent="authenticate">
+        <label for="username">Username</label>
+        <InputText id="username" v-model="credentials.username" autocomplete="username" required minlength="3" maxlength="32" />
+        <label for="password">Password</label>
+        <InputText id="password" v-model="credentials.password" type="password" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" required minlength="12" maxlength="128" />
+        <small v-if="authMode === 'signup'">Use at least 12 characters. Usernames can contain letters, numbers, dots, underscores and hyphens.</small>
+        <small v-if="authError" class="form-error" role="alert">{{ authError }}</small>
+        <Button type="submit" :label="authMode === 'login' ? 'Sign in' : 'Create account'" :loading="authBusy" />
+      </form>
+      <button class="auth-switch" @click="authMode = authMode === 'login' ? 'signup' : 'login'; authError = ''">{{ authMode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Sign in' }}</button>
+    </div>
+  </div>
+  <div v-else class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#" aria-label="Orbit home">
         <span class="brand-mark"><i class="pi pi-compass"></i></span>
@@ -127,8 +233,8 @@ function avatarClass(name: string) {
           <p>Keep the momentum going, one task at a time.</p>
         </div>
         <div class="profile">
-          <span class="avatar lavender">AM</span>
-          <span><strong>Alex Morgan</strong><small>My workspace</small></span>
+          <span class="avatar lavender">{{ initials(username) }}</span>
+          <span><strong>{{ username }}</strong><small>My workspace</small></span>
         </div>
       </div>
     </aside>
@@ -136,7 +242,7 @@ function avatarClass(name: string) {
     <main class="main">
       <header class="topbar">
         <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>Project board</strong></div>
-        <div class="topbar-right"><span class="topbar-label">YOUR WORKSPACE</span><span class="avatar lavender">AM</span></div>
+        <div class="topbar-right"><span class="topbar-label">{{ username }}</span><button class="logout-button" @click="logout">Sign out</button><span class="avatar lavender">{{ initials(username) }}</span></div>
       </header>
       <div class="content" id="board">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
@@ -183,7 +289,7 @@ function avatarClass(name: string) {
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
                   <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><span>{{ task.assignee || 'Unassigned' }}</span></div>
-                  <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :aria-label="`Move ${task.title} to ${statuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < statuses.length - 1" class="icon-button" :aria-label="`Move ${task.title} to ${statuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
+                  <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${statuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < statuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${statuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
                 </div>
               </article>
               <div v-if="!filteredTasks.some((task) => task.status === status)" class="empty-column">No tasks here yet.</div>
@@ -209,10 +315,10 @@ function avatarClass(name: string) {
           <div><label for="task-label">Label</label><InputText id="task-label" v-model="form.label" placeholder="e.g. Design" maxlength="40" /></div>
         </div>
         <div class="dialog-actions">
-          <Button v-if="editingId" type="button" label="Delete" severity="danger" text @click="deleteTask" />
+          <Button v-if="editingId" type="button" label="Delete" severity="danger" text :disabled="busy" @click="deleteTask" />
           <span class="actions-spacer"></span>
           <Button type="button" label="Cancel" severity="secondary" text @click="dialogVisible = false" />
-          <Button type="submit" :label="editingId ? 'Save changes' : 'Create task'" />
+          <Button type="submit" :label="editingId ? 'Save changes' : 'Create task'" :loading="busy" />
         </div>
       </form>
     </Dialog>

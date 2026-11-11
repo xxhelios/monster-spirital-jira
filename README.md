@@ -1,18 +1,32 @@
 # Orbit
 
-A lightweight starting point for a Jira-style task board, built with Vue 3, PrimeVue, TypeScript, and Webpack.
+A shared task board built with Vue, PrimeVue, TypeScript, a Node.js API, and PostgreSQL.
 
-## Getting started
+## Local development
 
-Requires Node.js 20.19+ or 22.12+ (a current LTS release is recommended).
+Requires Node.js 22.12+ (a current LTS release is recommended) and a PostgreSQL database. Set `DATABASE_URL` to a PostgreSQL connection string in your shell; do not commit credentials.
 
 ```sh
-npm install
-npm run dev
+npm ci
+npm run migrate
+npm start
 ```
 
-Open the address printed by Webpack (normally `http://localhost:8080`). Run `npm run build` to type-check and create a production build in `dist`, or `npm run typecheck` to check types without building.
+In another terminal, run `npm run dev`, then open `http://localhost:8080`. Webpack proxies API requests to the Node server at port 3000. Alternatively, run `npm run build` and open `http://localhost:3000` to use the production build served by Node.
 
-## Board
+Run `npm test` for API integration tests and `npm run build` for type-checking and a production build.
 
-Create, edit, delete, search, filter, and move tasks between To do, In progress, and Done. The board starts with example tasks and saves changes in the browser's local storage. It is local to the current browser and device: there is no server, shared workspace, authentication, or synchronization yet. Clearing browser storage removes saved tasks.
+## Deploy on Render
+
+1. Create a Render Postgres database and a **Node Web Service** in the same region.
+2. Set the Web Service's `DATABASE_URL` environment variable to the database's internal connection URL. Set `NODE_ENV` to `production` so session cookies are secure.
+3. Use build command `npm ci --include=dev && npm run build` and start command `npm run migrate && npm start`. Including development dependencies is required for Webpack and TypeScript when `NODE_ENV=production`.
+4. Open the service's HTTPS URL and create accounts. The Web Service serves both the frontend and API; a separate static site is not required.
+
+The schema command is idempotent for the initial schema, but future schema changes will need versioned migrations. Use a persistent Render Postgres plan and configure backups appropriate to your needs.
+
+## Accounts and data
+
+Signup is **open to anyone who can reach the site**, and every account can view, create, edit, and delete every task. There is no account approval, password reset, or user administration yet; do not use this for sensitive information until access is restricted. Usernames are case-insensitive, 3–32 characters, and passwords must contain 12–128 characters. Passwords are hashed with scrypt; sessions use HTTP-only, same-site cookies and expire after seven days. The basic login/signup rate limit is per server instance and resets on restart.
+
+Tasks and their status are shared through PostgreSQL. The board refreshes every 15 seconds, and concurrent edits are rejected rather than silently overwriting one another. On a conflict, close and reopen the task after the board refreshes before retrying. Existing browser-local tasks are not imported; the new shared board starts empty.
