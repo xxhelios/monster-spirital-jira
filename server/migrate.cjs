@@ -14,6 +14,7 @@ async function main() {
       await client.query('SELECT pg_advisory_xact_lock(786542319)');
       await client.query(schema);
       await client.query(backlogMigration);
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS accent_color TEXT');
       await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default' REFERENCES projects(id)");
       await client.query('CREATE INDEX IF NOT EXISTS tasks_project_id_idx ON tasks(project_id)');
       await client.query('COMMIT');

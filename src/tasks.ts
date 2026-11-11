@@ -1,4 +1,4 @@
-export const boardStatuses = ['To do', 'In progress', 'Done'] as const;
+export const boardStatuses = ['To do', 'In progress', 'In Review', 'Done'] as const;
 export const statuses = ['Backlog', ...boardStatuses] as const;
 export const priorities = ['Low', 'Medium', 'High'] as const;
 

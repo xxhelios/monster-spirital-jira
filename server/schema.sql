@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   username VARCHAR(32) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  accent_color TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -36,7 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT NOT NULL DEFAULT 'default' REFERENCES projects(id),
   title VARCHAR(120) NOT NULL,
   description VARCHAR(1000) NOT NULL DEFAULT '',
-  status TEXT NOT NULL CONSTRAINT tasks_status_check CHECK (status IN ('Backlog', 'To do', 'In progress', 'Done')),
+  status TEXT NOT NULL CONSTRAINT tasks_status_check CHECK (status IN ('Backlog', 'To do', 'In progress', 'In Review', 'Done')),
   priority TEXT NOT NULL CHECK (priority IN ('Low', 'Medium', 'High')),
   assignee VARCHAR(80) NOT NULL DEFAULT '',
   label VARCHAR(40) NOT NULL DEFAULT '',

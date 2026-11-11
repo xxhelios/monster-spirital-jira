@@ -15,9 +15,20 @@ const authMode = ref<'login' | 'signup'>('login');
 const credentials = reactive({ username: '', password: '' });
 const authError = ref('');
 const authBusy = ref(false);
+const accountMenuOpen = ref(false);
+const accountMenu = ref<HTMLElement | null>(null);
+const accountMenuButton = ref<HTMLButtonElement | null>(null);
+const accentColors = ['peach', 'lavender', 'mint', 'blue', 'rose', 'gold'] as const;
+type AccentColor = (typeof accentColors)[number];
+type User = { username: string; accent_color: AccentColor | null };
+const accountDialog = ref<'username' | 'password' | 'color' | null>(null);
+const accountForm = reactive<{ username: string; currentPassword: string; newPassword: string; confirmPassword: string; color: AccentColor }>({ username: '', currentPassword: '', newPassword: '', confirmPassword: '', color: 'lavender' });
+const accountError = ref('');
+const accountBusy = ref(false);
 const loading = ref(true);
 const tasks = ref<Task[]>([]);
-const users = ref<string[]>([]);
+const users = ref<User[]>([]);
+const userNames = computed(() => users.value.map((user) => user.username));
 const usersError = ref('');
 const usersLoading = ref(false);
 let usersGeneration = 0;
@@ -67,6 +78,9 @@ function handleError(error: unknown) {
     boardLoadError.value = '';
     editingTitle.value = false;
     dialogVisible.value = false;
+    accountDialog.value = null;
+    accountMenuOpen.value = false;
+    clearAccountForm();
     authError.value = error.message;
   } else {
     notice.value = message(error);
@@ -78,9 +92,9 @@ async function refreshUsers() {
   const currentUser = username.value;
   usersLoading.value = true;
   try {
-    const result = await request<{ users: { username: string }[] }>('/users');
+    const result = await request<{ users: User[] }>('/users');
     if (generation === usersGeneration && currentUser && username.value === currentUser) {
-      users.value = result.users.map((user) => user.username);
+      users.value = result.users;
       usersError.value = '';
     }
   } catch (error) {
@@ -209,6 +223,78 @@ async function authenticate() {
   }
 }
 
+function clearAccountForm() {
+  accountForm.username = '';
+  accountForm.currentPassword = '';
+  accountForm.newPassword = '';
+  accountForm.confirmPassword = '';
+  accountError.value = '';
+}
+
+function openAccountDialog(kind: 'username' | 'password' | 'color') {
+  accountMenuOpen.value = false;
+  clearAccountForm();
+  accountForm.username = username.value;
+  accountForm.color = avatarClass(username.value);
+  accountDialog.value = kind;
+}
+
+async function saveAccount() {
+  if (!accountDialog.value || accountBusy.value) return;
+  if (accountDialog.value === 'password' && accountForm.newPassword !== accountForm.confirmPassword) {
+    accountError.value = 'New passwords do not match.';
+    return;
+  }
+  accountBusy.value = true;
+  accountError.value = '';
+  if (accountDialog.value === 'color') {
+    try {
+      const result = await request<{ user: User }>('/auth/color', { method: 'PATCH', body: { color: accountForm.color } });
+      ++usersGeneration;
+      users.value = [...users.value.filter((user) => user.username !== result.user.username), result.user];
+      accountDialog.value = null;
+      clearAccountForm();
+      await refreshUsers();
+      if (username.value) notice.value = 'Accent color updated successfully.';
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) handleError(error);
+      else accountError.value = message(error);
+    } finally {
+      accountBusy.value = false;
+    }
+    return;
+  }
+  const body = accountDialog.value === 'username'
+    ? { username: accountForm.username, currentPassword: accountForm.currentPassword }
+    : { newPassword: accountForm.newPassword, currentPassword: accountForm.currentPassword };
+  try {
+    const result = await request<{ user: { username: string } }>('/auth/account', { method: 'PATCH', body });
+    username.value = result.user.username;
+    accountDialog.value = null;
+    clearAccountForm();
+    await Promise.all([refreshUsers(), refreshTasks(), refreshBoard()]);
+    if (username.value) notice.value = 'Account updated successfully.';
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else accountError.value = message(error);
+  } finally {
+    accountBusy.value = false;
+  }
+}
+
+function closeAccountMenu(event: PointerEvent) {
+  if (event.target instanceof Node && !accountMenu.value?.contains(event.target)) accountMenuOpen.value = false;
+}
+
+function accountMenuEscape() {
+  accountMenuOpen.value = false;
+  accountMenuButton.value?.focus();
+}
+
+function accountMenuFocusOut(event: FocusEvent) {
+  if (event.relatedTarget instanceof Node && !accountMenu.value?.contains(event.relatedTarget)) accountMenuOpen.value = false;
+}
+
 async function logout() {
   try {
     await request('/auth/logout', { method: 'POST', body: {} });
@@ -224,6 +310,9 @@ async function logout() {
     projects.value = [];
     boardLoadError.value = '';
     editingTitle.value = false;
+    accountMenuOpen.value = false;
+    accountDialog.value = null;
+    clearAccountForm();
     notice.value = '';
   } catch (error) {
     handleError(error);
@@ -247,6 +336,7 @@ function syncView() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncView);
+  document.addEventListener('pointerdown', closeAccountMenu);
   syncView();
   try {
     const result = await request<{ user: { username: string } }>('/auth/me');
@@ -260,10 +350,12 @@ onMounted(async () => {
   refreshTimer = setInterval(() => {
     if (username.value && projectId.value && !busy.value && !draggedTask.value) void refreshTasks();
     if (username.value && !editingTitle.value && !titleSaving.value) void refreshBoard();
+    if (username.value && !usersLoading.value) void refreshUsers();
   }, 15000);
 });
 onUnmounted(() => {
   window.removeEventListener('hashchange', syncView);
+  document.removeEventListener('pointerdown', closeAccountMenu);
   if (refreshTimer) clearInterval(refreshTimer);
   endDrag();
 });
@@ -333,6 +425,12 @@ function openTask(task?: Task, status: Status = 'To do') {
   formError.value = '';
   dialogVisible.value = true;
   void refreshUsers();
+}
+
+function doubleClickTask(task: Task, event: MouseEvent) {
+  if (busy.value || dialogVisible.value || draggedTask.value) return;
+  if (event.target instanceof Element && event.target.closest('button, input, select, textarea, a, [role="button"], [role="combobox"], .drag-handle')) return;
+  openTask(task);
 }
 
 async function saveTask() {
@@ -499,8 +597,12 @@ function initials(name: string) {
 }
 
 function avatarClass(name: string) {
-  const colors = ['peach', 'lavender', 'mint', 'blue'];
-  return colors[Array.from(name).reduce((sum, char) => sum + char.charCodeAt(0), 0) % colors.length];
+  const user = users.value.find((member) => member.username === name);
+  return user?.accent_color ?? accentColors[Array.from(name).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4];
+}
+
+function ticketColor(name: string) {
+  return name && users.value.some((user) => user.username === name) ? `ticket-${avatarClass(name)}` : '';
 }
 </script>
 
@@ -515,8 +617,8 @@ function avatarClass(name: string) {
         <label for="username">Username</label>
         <InputText id="username" v-model="credentials.username" autocomplete="username" required minlength="3" maxlength="32" />
         <label for="password">Password</label>
-        <InputText id="password" v-model="credentials.password" type="password" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" required minlength="12" maxlength="128" />
-        <small v-if="authMode === 'signup'">Use at least 12 characters. Usernames can contain letters, numbers, dots, underscores and hyphens.</small>
+        <InputText id="password" v-model="credentials.password" type="password" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" required :minlength="authMode === 'signup' ? 8 : undefined" :pattern="authMode === 'signup' ? '(?=[\\s\\S]*[a-zA-Z])(?=[\\s\\S]*[0-9])[\\s\\S]{8,}' : undefined" :title="authMode === 'signup' ? 'Use at least 8 characters, including letters and numbers.' : undefined" />
+        <small v-if="authMode === 'signup'">Use at least 8 characters, including letters and numbers. Usernames can contain letters, numbers, dots, underscores and hyphens.</small>
         <small v-if="authError" class="form-error" role="alert">{{ authError }}</small>
         <Button type="submit" :label="authMode === 'login' ? 'Sign in' : 'Create account'" :loading="authBusy" />
       </form>
@@ -546,13 +648,8 @@ function avatarClass(name: string) {
         </template>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-note">
-          <div class="note-icon"><i class="pi pi-sparkles"></i></div>
-          <strong>A little progress<br>adds up.</strong>
-          <p>Keep the momentum going, one task at a time.</p>
-        </div>
         <div class="profile">
-          <span class="avatar lavender">{{ initials(username) }}</span>
+          <span class="avatar" :class="avatarClass(username)">{{ initials(username) }}</span>
           <span><strong>{{ username }}</strong><small>My workspace</small></span>
         </div>
       </div>
@@ -561,7 +658,17 @@ function avatarClass(name: string) {
     <main class="main">
       <header class="topbar">
         <div class="breadcrumb"><a href="#workspace">Workspace</a><template v-if="activeView !== 'workspace' && board"><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? 'Board' : 'Backlog' }}</strong></template></div>
-        <div class="topbar-right"><span class="topbar-label">{{ username }}</span><button class="logout-button" @click="logout">Sign out</button><span class="avatar lavender">{{ initials(username) }}</span></div>
+        <div ref="accountMenu" class="topbar-right account-menu" @keydown.esc.stop.prevent="accountMenuEscape" @focusout="accountMenuFocusOut">
+          <button ref="accountMenuButton" class="account-trigger" type="button" aria-controls="account-menu" :aria-expanded="accountMenuOpen" aria-label="Account menu" @click="accountMenuOpen = !accountMenuOpen">
+            <span class="topbar-label">{{ username }}</span><span class="avatar" :class="avatarClass(username)">{{ initials(username) }}</span><i class="pi pi-angle-down" aria-hidden="true"></i>
+          </button>
+          <div v-if="accountMenuOpen" id="account-menu" class="account-dropdown">
+            <button type="button" @click="openAccountDialog('username')">Change username</button>
+            <button type="button" @click="openAccountDialog('password')">Change password</button>
+            <button type="button" @click="openAccountDialog('color')">Change accent color</button>
+            <button type="button" @click="logout">Sign out</button>
+          </div>
+        </div>
       </header>
       <nav class="mobile-nav" aria-label="Workspace navigation">
         <a class="nav-link" :class="{ active: activeView === 'workspace' }" href="#workspace" :aria-current="activeView === 'workspace' ? 'page' : undefined"><i class="pi pi-home" aria-hidden="true"></i> Workspace</a>
@@ -620,13 +727,13 @@ function avatarClass(name: string) {
               <button class="icon-button" :aria-label="`Add task to ${status}`" @click="openTask(undefined, status)"><i class="pi pi-plus"></i></button>
             </div>
             <div class="task-list">
-              <article v-for="task in filteredTasks.filter((item) => item.status === status)" :key="task.id" class="task-card" :class="{ 'task-dragging': draggedTask?.id === task.id }" :draggable="!busy" @dragstart="startDrag(task, $event)" @dragend="endDrag">
+              <article v-for="task in filteredTasks.filter((item) => item.status === status)" :key="task.id" class="task-card" :class="[ticketColor(task.assignee), { 'task-dragging': draggedTask?.id === task.id }]" :draggable="!busy" @dblclick="doubleClickTask(task, $event)" @dragstart="startDrag(task, $event)" @dragend="endDrag">
                 <div class="card-top"><span class="task-id">{{ task.id }}</span><div class="card-controls"><span class="drag-handle" aria-hidden="true" title="Drag to move" @touchstart.prevent="startTouchDrag(task, $event)" @touchmove.prevent="moveTouchDrag" @touchend.prevent="endTouchDrag" @touchcancel="endDrag"><i class="pi pi-bars"></i></span><button class="icon-button edit-button" :aria-label="`Edit ${task.title}`" @click="openTask(task)"><i class="pi pi-ellipsis-h"></i></button></div></div>
                 <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
                 <p class="task-description">{{ task.description || 'No description yet.' }}</p>
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
-                  <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="users" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
+                  <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="userNames" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
                   <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < boardStatuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
                 </div>
               </article>
@@ -636,14 +743,12 @@ function avatarClass(name: string) {
           </section>
         </div>
         <section v-else class="backlog-list" aria-label="Backlog tasks">
-          <article v-for="task in backlogTasks" :key="task.id" class="backlog-item">
-            <div class="backlog-details">
-              <span class="task-id">{{ task.id }}</span>
-              <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
-              <p class="task-description">{{ task.description || 'No description yet.' }}</p>
-              <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="users" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
+          <article v-for="task in backlogTasks" :key="task.id" class="backlog-item" :class="ticketColor(task.assignee)" @dblclick="doubleClickTask(task, $event)">
+            <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
+            <div class="backlog-actions">
+              <Button label="Edit" icon="pi pi-pencil" severity="secondary" text :disabled="busy" :aria-label="`Edit ${task.title}`" @click="openTask(task)" />
+              <Button label="Move to To do" icon="pi pi-arrow-right" :disabled="busy" :aria-label="`Move ${task.title} to To do`" @click="moveTaskToStatus(task, 'To do')" />
             </div>
-            <Button label="Move to To do" icon="pi pi-arrow-right" :disabled="busy" :aria-label="`Move ${task.title} to To do`" @click="moveTaskToStatus(task, 'To do')" />
           </article>
           <div v-if="!backlogTasks.length" class="empty-column">{{ search || priorityFilter !== 'All priorities' ? 'No matching backlog tasks.' : 'Your backlog is empty. Create a task to get started.' }}</div>
         </section>
@@ -652,6 +757,40 @@ function avatarClass(name: string) {
         <footer class="footer"><span>Made for making progress <span class="footer-heart">♥</span></span><span>One task at a time.</span></footer>
       </div>
     </main>
+
+    <Dialog :visible="accountDialog !== null" modal :header="accountDialog === 'username' ? 'Change username' : accountDialog === 'password' ? 'Change password' : 'Change accent color'" :style="{ width: 'min(94vw, 440px)' }" :closable="!accountBusy" :close-on-escape="!accountBusy" @update:visible="!$event && (accountDialog = null)" @hide="clearAccountForm">
+      <form class="task-form" @submit.prevent="saveAccount">
+        <template v-if="accountDialog === 'username'">
+          <label for="account-username">New username</label>
+          <InputText id="account-username" v-model="accountForm.username" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]{2,31}" title="Use 3–32 letters, numbers, dots, underscores or hyphens, starting with a letter or number." />
+        </template>
+        <template v-else-if="accountDialog === 'password'">
+          <label for="account-new-password">New password</label>
+          <InputText id="account-new-password" v-model="accountForm.newPassword" type="password" autocomplete="new-password" required minlength="8" pattern="(?=[\s\S]*[a-zA-Z])(?=[\s\S]*[0-9])[\s\S]{8,}" title="Use at least 8 characters, including letters and numbers." />
+          <small>Use at least 8 characters, including letters and numbers.</small>
+          <label for="account-confirm-password">Confirm new password</label>
+          <InputText id="account-confirm-password" v-model="accountForm.confirmPassword" type="password" autocomplete="new-password" required />
+        </template>
+        <fieldset v-else class="color-options">
+          <legend>Choose your accent color</legend>
+          <label v-for="color in accentColors" :key="color" class="color-option">
+            <input v-model="accountForm.color" type="radio" name="accent-color" :value="color">
+            <span class="color-swatch" :class="color" aria-hidden="true"></span>
+            <span class="color-name">{{ color }}</span>
+          </label>
+        </fieldset>
+        <template v-if="accountDialog !== 'color'">
+          <label for="account-current-password">Current password</label>
+          <InputText id="account-current-password" v-model="accountForm.currentPassword" type="password" autocomplete="current-password" required />
+        </template>
+        <small v-if="accountError" class="form-error" role="alert">{{ accountError }}</small>
+        <div class="dialog-actions">
+          <span class="actions-spacer"></span>
+          <Button type="button" label="Cancel" severity="secondary" text :disabled="accountBusy" @click="accountDialog = null" />
+          <Button type="submit" label="Save changes" :loading="accountBusy" />
+        </div>
+      </form>
+    </Dialog>
 
     <Dialog v-model:visible="dialogVisible" modal :header="editingId ? 'Edit task' : 'Create a task'" :style="{ width: 'min(94vw, 520px)' }">
       <form class="task-form" @submit.prevent="saveTask">
@@ -663,7 +802,7 @@ function avatarClass(name: string) {
         <div class="form-grid">
           <div><label id="status-label" for="task-status">Status</label><Select input-id="task-status" aria-labelledby="status-label" v-model="form.status" :options="[...statuses]" /></div>
           <div><label id="priority-label" for="task-priority">Priority</label><Select input-id="task-priority" aria-labelledby="priority-label" v-model="form.priority" :options="[...priorities]" /></div>
-          <div><label id="assignee-label" for="task-assignee">Assignee</label><AssigneeSelect input-id="task-assignee" labelledby="assignee-label" label="Assignee" v-model="form.assignee" :users="users" :loading="usersLoading" @refresh="refreshUsers" /><small v-if="usersError" class="form-error" role="alert">Could not load team members: {{ usersError }} <button type="button" class="auth-switch board-retry" @click="refreshUsers()">Retry</button></small></div>
+          <div><label id="assignee-label" for="task-assignee">Assignee</label><AssigneeSelect input-id="task-assignee" labelledby="assignee-label" label="Assignee" v-model="form.assignee" :users="userNames" :loading="usersLoading" @refresh="refreshUsers" /><small v-if="usersError" class="form-error" role="alert">Could not load team members: {{ usersError }} <button type="button" class="auth-switch board-retry" @click="refreshUsers()">Retry</button></small></div>
           <div><label for="task-label">Label</label><InputText id="task-label" v-model="form.label" placeholder="e.g. Design" maxlength="40" /></div>
         </div>
         <div class="dialog-actions">
