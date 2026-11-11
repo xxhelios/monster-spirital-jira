@@ -13,7 +13,7 @@ const statuses = ['Backlog', 'To do', 'In progress', 'In Review', 'Done'];
 const priorities = ['Low', 'Medium', 'High'];
 const accentColors = ['peach', 'lavender', 'mint', 'blue', 'rose', 'gold'];
 const tokenHash = (token) => createHash('sha256').update(token).digest('hex');
-const taskFromRow = (row) => ({ ...row, id: `ORB-${row.id}` });
+const taskFromRow = (row) => ({ ...row, id: `MSC-${String(row.id).padStart(4, '0')}` });
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function validUsername(username) {
@@ -38,10 +38,10 @@ function validTask(body) {
 }
 
 function taskId(value) {
-  const match = /^ORB-([1-9]\d*)$/.exec(value);
+  const match = /^(?:MSC-(\d{4,})|ORB-([1-9]\d*))$/.exec(value);
   if (!match) return null;
-  const id = Number(match[1]);
-  return Number.isSafeInteger(id) && id <= 2147483647 ? id : null;
+  const id = Number(match[1] ?? match[2]);
+  return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
 }
 
 function createApp(pool, options = {}) {

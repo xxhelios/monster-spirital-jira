@@ -48,6 +48,40 @@ test('accent color migration preserves existing users and is repeatable', () => 
   assert.equal(db.public.one("SELECT accent_color FROM users WHERE username = 'existing'").accent_color, 'mint');
 });
 
+test('ticket identifiers preserve numeric IDs and accept legacy API references', async (t) => {
+  const db = newDb();
+  db.public.none(fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8'));
+  db.public.none("INSERT INTO tasks (id, title, status, priority) VALUES (9, 'Existing', 'Backlog', 'Low'), (9999, 'Four digits', 'To do', 'Low'), (10000, 'Five digits', 'To do', 'Low')");
+  const { Pool } = db.adapters.createPg();
+  const pool = new Pool();
+  const server = createApp(pool, { secureCookies: false }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await pool.end();
+  });
+  const base = `http://127.0.0.1:${server.address().port}/api`;
+  async function call(url, method = 'GET', body, cookie) {
+    const response = await fetch(base + url, {
+      method,
+      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, data: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
+  }
+  const signup = await call('/auth/signup', 'POST', { username: 'ticketuser', password: 'password1' });
+  const tasks = (await call('/projects/default/tasks', 'GET', undefined, signup.cookie)).data.tasks;
+  assert.deepEqual(tasks.map((task) => task.id), ['MSC-0009', 'MSC-9999', 'MSC-10000']);
+  const legacyUpdate = await call('/projects/default/tasks/ORB-9', 'PUT', { ...tasks[0], title: 'Updated' }, signup.cookie);
+  assert.equal(legacyUpdate.status, 200);
+  assert.equal(legacyUpdate.data.task.id, 'MSC-0009');
+  assert.equal((await call('/projects/default/tasks/MSC-0009', 'DELETE', { version: legacyUpdate.data.task.version }, signup.cookie)).status, 200);
+  for (const id of ['MSC-0000', 'MSC-001', 'MSC--0001', 'MSC-2147483648', 'ORB-0', 'ORB-0009']) {
+    assert.equal((await call(`/projects/default/tasks/${id}`, 'DELETE', { version: 1 }, signup.cookie)).status, 400, id);
+  }
+  assert.equal((await call('/projects/default/tasks/MSC-10000', 'DELETE', { version: 1 }, signup.cookie)).status, 200);
+});
+
 test('account changes require the current password and preserve assignments', async (t) => {
   const db = newDb();
   db.public.none(fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8'));
@@ -182,6 +216,7 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   const task = { title: 'Shared work', description: '', status: 'To do', priority: 'High', assignee: 'alice', label: '' };
   const backlog = await call('/projects/default/tasks', 'POST', { ...task, title: 'Upcoming', status: 'Backlog' }, alice.cookie);
   assert.equal(backlog.status, 201);
+  assert.equal(backlog.data.task.id, 'MSC-0001');
   assert.equal((await call('/projects/default/tasks', 'GET', undefined, bob.cookie)).data.tasks[0].status, 'Backlog');
   const planned = await call(`/projects/default/tasks/${backlog.data.task.id}`, 'PUT', { ...backlog.data.task, status: 'To do' }, bob.cookie);
   assert.equal(planned.data.task.status, 'To do');
@@ -192,7 +227,7 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   assert.equal((await call('/projects/default/tasks', 'POST', { ...task, status: 'invalid' }, alice.cookie)).status, 400);
   const created = await call('/projects/default/tasks', 'POST', task, alice.cookie);
   assert.equal(created.status, 201);
-  assert.match(created.data.task.id, /^ORB-\d+$/);
+  assert.equal(created.data.task.id, 'MSC-0002');
   const shared = await call('/projects/default/tasks', 'GET', undefined, bob.cookie);
   assert.equal(shared.data.tasks.length, 1);
   assert.equal(shared.data.tasks[0].title, 'Shared work');

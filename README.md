@@ -37,7 +37,7 @@ Use the Backlog tab to create and collect upcoming tasks. Select **Move to To do
 
 Assign tasks from the searchable team-member dropdown in the task editor. Select Unassigned to clear an assignment. Names entered before this dropdown was added remain visible until changed.
 
-Double-click a ticket on the board or in the backlog to edit it. You can also select its title or use its edit button. Backlog rows show the assignee avatar, title, and actions; edit a ticket to see its other details.
+Tickets use numbers such as MSC-0001, with at least four digits; existing tickets retain their numeric IDs. Double-click a ticket on the board or in the backlog to edit it. You can also select its title or use its edit button. Backlog rows show the ticket number, assignee avatar, title, and actions; edit a ticket to see its other details.
 
 Click the project name above its Board and Backlog tabs to rename it for everyone. Save with the button, Enter, or by clicking outside; Escape cancels. If someone else changes the name at the same time, review your draft and save again.
 

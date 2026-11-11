@@ -132,6 +132,7 @@ h1 { margin-top: 9px; font-size: clamp(29px, 3vw, 37px); font-weight: 800; lette
 .backlog-list { display: grid; gap: 10px; padding: 14px; border: 1px solid #eff0f5; border-radius: 12px; background: #f1f2f7; }
 .backlog-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px 6px 14px; border: 1px solid #ebecf2; border-radius: 9px; background: #fff; }
 .backlog-title { display: flex; align-items: center; gap: 8px; flex: 1 1 100px; min-width: 0; }
+.backlog-title .task-id { flex-shrink: 0; }
 .backlog-title .task-title { min-width: 0; }
 .backlog-actions { display: flex; flex-shrink: 0; gap: 4px; }
 .backlog-item .p-button { padding: 7px 10px; font-size: 12px; }
