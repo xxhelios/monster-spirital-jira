@@ -27,6 +27,14 @@ const accountForm = reactive<{ username: string; currentPassword: string; newPas
 const accountError = ref('');
 const accountBusy = ref(false);
 const loading = ref(true);
+const sidebarMin = 180;
+const sidebarMax = 400;
+const sidebarWidth = ref<number | null>(null);
+const sidebarResizing = ref(false);
+const sidebarElement = ref<HTMLElement | null>(null);
+let sidebarPointer: { id: number; startX: number; startWidth: number } | null = null;
+const displayedSidebarWidth = computed(() => sidebarWidth.value ?? (viewportWidth.value <= 1050 ? 200 : 240));
+const viewportWidth = ref(window.innerWidth);
 const tasks = ref<Task[]>([]);
 const users = ref<User[]>([]);
 const userNames = computed(() => users.value.map((user) => user.username));
@@ -81,6 +89,47 @@ let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+}
+
+function updateSidebarWidth(width: number) {
+  sidebarWidth.value = Math.max(sidebarMin, Math.min(sidebarMax, Math.round(width)));
+}
+
+function startSidebarResize(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0 || !(event.currentTarget instanceof HTMLElement) || !sidebarElement.value) return;
+  sidebarPointer = { id: event.pointerId, startX: event.clientX, startWidth: sidebarElement.value.getBoundingClientRect().width };
+  sidebarResizing.value = true;
+  event.currentTarget.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function moveSidebarResize(event: PointerEvent) {
+  if (sidebarPointer?.id === event.pointerId) updateSidebarWidth(sidebarPointer.startWidth + event.clientX - sidebarPointer.startX);
+}
+
+function endSidebarResize(event: PointerEvent) {
+  if (sidebarPointer?.id !== event.pointerId) return;
+  sidebarPointer = null;
+  sidebarResizing.value = false;
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+}
+
+function resizeSidebarKey(event: KeyboardEvent) {
+  const delta = event.shiftKey ? 40 : 10;
+  if (event.key === 'ArrowLeft') updateSidebarWidth(displayedSidebarWidth.value - delta);
+  else if (event.key === 'ArrowRight') updateSidebarWidth(displayedSidebarWidth.value + delta);
+  else if (event.key === 'Home') updateSidebarWidth(sidebarMin);
+  else if (event.key === 'End') updateSidebarWidth(sidebarMax);
+  else return;
+  event.preventDefault();
+}
+
+function updateViewportWidth() {
+  viewportWidth.value = window.innerWidth;
+  if (viewportWidth.value <= 760) {
+    sidebarPointer = null;
+    sidebarResizing.value = false;
+  }
 }
 
 function handleError(error: unknown) {
@@ -356,6 +405,7 @@ function syncView() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncView);
+  window.addEventListener('resize', updateViewportWidth);
   document.addEventListener('pointerdown', closeAccountMenu);
   syncView();
   try {
@@ -375,6 +425,7 @@ onMounted(async () => {
 });
 onUnmounted(() => {
   window.removeEventListener('hashchange', syncView);
+  window.removeEventListener('resize', updateViewportWidth);
   document.removeEventListener('pointerdown', closeAccountMenu);
   if (refreshTimer) clearInterval(refreshTimer);
   endDrag();
@@ -678,8 +729,8 @@ function ticketColor(name: string) {
       <button class="auth-switch" @click="authMode = authMode === 'login' ? 'signup' : 'login'; authError = ''">{{ authMode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Sign in' }}</button>
     </div>
   </div>
-  <div v-else class="app-shell">
-    <aside class="sidebar">
+  <div v-else class="app-shell" :class="{ 'sidebar-resizing': sidebarResizing }">
+    <aside id="workspace-sidebar" ref="sidebarElement" class="sidebar" :style="sidebarWidth === null ? undefined : { width: `${sidebarWidth}px`, flexBasis: `${sidebarWidth}px` }">
       <a class="brand" href="#" aria-label="Monster Spirital Company home">
         <span class="brand-mark"><i class="pi pi-compass"></i></span>
         <span>Monster Spirital Company<span class="brand-dot">.</span></span>
@@ -705,6 +756,7 @@ function ticketColor(name: string) {
           <span class="avatar" :class="avatarClass(username)">{{ initials(username) }}</span>
           <span><strong>{{ username }}</strong><small>My workspace</small></span>
         </div>
+        <div class="sidebar-resize" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" aria-controls="workspace-sidebar" :aria-valuemin="sidebarMin" :aria-valuemax="sidebarMax" :aria-valuenow="displayedSidebarWidth" tabindex="0" @pointerdown="startSidebarResize" @pointermove="moveSidebarResize" @pointerup="endSidebarResize" @pointercancel="endSidebarResize" @lostpointercapture="endSidebarResize" @keydown="resizeSidebarKey"></div>
       </div>
     </aside>
 

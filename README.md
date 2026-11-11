@@ -33,6 +33,8 @@ Use the account menu in the top-right corner to change your username, password, 
 
 Tasks and their status are shared through PostgreSQL. Workspace lists active projects with their progress; create projects there, or archive and restore them without deleting tasks. Each project has its own board and backlog. The board and project list refresh every 15 seconds, and concurrent edits are rejected rather than silently overwriting one another. On a conflict, close and reopen the task after the board refreshes before retrying. Existing browser-local tasks are not imported.
 
+On desktop, drag the right edge of the sidebar to resize it. You can also focus the divider and use the arrow keys (Shift for larger steps), Home, or End. The width lasts for the current page session.
+
 In Workspace, use Delete on an active or archived project to permanently delete the project and all its board and backlog tickets after confirmation. This cannot be undone; archive a project instead if you may need it later.
 
 Use the Backlog tab to create and collect upcoming tasks. Select **Move to To do** when a task is ready for the board. To return a task to the backlog, edit it and change its status to Backlog. The board's task count and progress exclude backlog tasks.
