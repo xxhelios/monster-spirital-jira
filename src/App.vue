@@ -6,7 +6,7 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import Textarea from 'primevue/textarea';
 import { ApiError, request } from './api';
-import { priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
+import { boardStatuses, priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
 
 const notice = ref('');
 const username = ref('');
@@ -17,6 +17,13 @@ const authBusy = ref(false);
 const loading = ref(true);
 const tasks = ref<Task[]>([]);
 const busy = ref(false);
+const activeView = ref<'board' | 'backlog'>(window.location.hash === '#backlog' ? 'backlog' : 'board');
+const draggedTask = ref<Task | null>(null);
+const dropTarget = ref<Status | null>(null);
+let touchStartPosition: { x: number; y: number } | null = null;
+let touchPosition: { x: number; y: number } | null = null;
+let touchScrollFrame: number | null = null;
+let touchMoved = false;
 let refreshGeneration = 0;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -75,7 +82,15 @@ async function logout() {
   }
 }
 
+function syncView() {
+  activeView.value = window.location.hash === '#backlog' ? 'backlog' : 'board';
+  search.value = '';
+  priorityFilter.value = 'All priorities';
+  endDrag();
+}
+
 onMounted(async () => {
+  window.addEventListener('hashchange', syncView);
   try {
     const result = await request<{ user: { username: string } }>('/auth/me');
     username.value = result.user.username;
@@ -86,10 +101,14 @@ onMounted(async () => {
     loading.value = false;
   }
   refreshTimer = setInterval(() => {
-    if (username.value && !busy.value) void refreshTasks();
+    if (username.value && !busy.value && !draggedTask.value) void refreshTasks();
   }, 15000);
 });
-onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
+onUnmounted(() => {
+  window.removeEventListener('hashchange', syncView);
+  if (refreshTimer) clearInterval(refreshTimer);
+  endDrag();
+});
 
 const search = ref('');
 const priorityFilter = ref('All priorities');
@@ -101,7 +120,9 @@ const filteredTasks = computed(() => {
   );
 });
 const completed = computed(() => tasks.value.filter((task) => task.status === 'Done').length);
-const progress = computed(() => tasks.value.length ? Math.round(completed.value / tasks.value.length * 100) : 0);
+const boardTasks = computed(() => tasks.value.filter((task) => task.status !== 'Backlog'));
+const backlogTasks = computed(() => filteredTasks.value.filter((task) => task.status === 'Backlog'));
+const progress = computed(() => boardTasks.value.length ? Math.round(completed.value / boardTasks.value.length * 100) : 0);
 const dialogVisible = ref(false);
 const editingId = ref<string | null>(null);
 const editingVersion = ref<number | null>(null);
@@ -168,8 +189,13 @@ async function deleteTask() {
 }
 
 async function moveTask(task: Task, direction: number) {
-  const nextStatus = statuses[statuses.indexOf(task.status) + direction];
-  if (!nextStatus || busy.value) return;
+  const index = boardStatuses.findIndex((status) => status === task.status);
+  const nextStatus = index === -1 ? undefined : boardStatuses[index + direction];
+  if (nextStatus) await moveTaskToStatus(task, nextStatus);
+}
+
+async function moveTaskToStatus(task: Task, nextStatus: Status) {
+  if (task.status === nextStatus || busy.value) return;
   busy.value = true;
   ++refreshGeneration;
   try {
@@ -180,6 +206,89 @@ async function moveTask(task: Task, direction: number) {
   } finally {
     busy.value = false;
   }
+}
+
+function startDrag(task: Task, event: DragEvent) {
+  if (busy.value || !event.dataTransfer) {
+    event.preventDefault();
+    return;
+  }
+  draggedTask.value = { ...task };
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', task.id);
+}
+
+function endDrag() {
+  if (touchScrollFrame !== null) cancelAnimationFrame(touchScrollFrame);
+  touchScrollFrame = null;
+  draggedTask.value = null;
+  dropTarget.value = null;
+  touchStartPosition = null;
+  touchPosition = null;
+  touchMoved = false;
+}
+
+function dragOver(status: Status, event: DragEvent) {
+  if (!draggedTask.value || busy.value || draggedTask.value.status === status) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  dropTarget.value = status;
+}
+
+function dragLeave(status: Status, event: DragEvent) {
+  const column = event.currentTarget;
+  if (column instanceof HTMLElement && event.relatedTarget instanceof Node && column.contains(event.relatedTarget)) return;
+  if (dropTarget.value === status) dropTarget.value = null;
+}
+
+function dropTask(status: Status, event: DragEvent) {
+  if (!draggedTask.value) return;
+  event.preventDefault();
+  const task = draggedTask.value;
+  endDrag();
+  void moveTaskToStatus(task, status);
+}
+
+function startTouchDrag(task: Task, event: TouchEvent) {
+  if (busy.value || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+  draggedTask.value = { ...task };
+  touchStartPosition = { x: touch.clientX, y: touch.clientY };
+  touchMoved = false;
+}
+
+function moveTouchDrag(event: TouchEvent) {
+  const touch = event.touches[0];
+  if (!touch || !draggedTask.value || !touchStartPosition) return;
+  if (Math.hypot(touch.clientX - touchStartPosition.x, touch.clientY - touchStartPosition.y) > 10) touchMoved = true;
+  touchPosition = { x: touch.clientX, y: touch.clientY };
+  updateTouchTarget();
+  if (touchMoved && touchScrollFrame === null) touchScrollFrame = requestAnimationFrame(scrollDuringTouchDrag);
+}
+
+function updateTouchTarget() {
+  if (!touchPosition || !draggedTask.value) return;
+  const column = document.elementFromPoint(touchPosition.x, touchPosition.y)?.closest<HTMLElement>('[data-drop-status]');
+  const status = statuses.find((item) => item === column?.dataset.dropStatus);
+  dropTarget.value = touchMoved && status && status !== draggedTask.value.status ? status : null;
+}
+
+function scrollDuringTouchDrag() {
+  touchScrollFrame = null;
+  if (!touchPosition || !draggedTask.value || !touchMoved) return;
+  const edge = 70;
+  if (touchPosition.y < edge) window.scrollBy(0, -12);
+  else if (touchPosition.y > window.innerHeight - edge) window.scrollBy(0, 12);
+  updateTouchTarget();
+  touchScrollFrame = requestAnimationFrame(scrollDuringTouchDrag);
+}
+
+function endTouchDrag() {
+  const task = draggedTask.value;
+  const status = dropTarget.value;
+  endDrag();
+  if (task && status) void moveTaskToStatus(task, status);
 }
 
 function initials(name: string) {
@@ -224,7 +333,8 @@ function avatarClass(name: string) {
       </div>
       <p class="nav-label">WORKSPACE</p>
       <nav aria-label="Workspace navigation">
-        <a class="nav-link active" href="#board" aria-current="page"><i class="pi pi-th-large"></i> Board <span class="nav-indicator"></span></a>
+        <a class="nav-link" :class="{ active: activeView === 'board' }" href="#board" :aria-current="activeView === 'board' ? 'page' : undefined"><i class="pi pi-th-large" aria-hidden="true"></i> Board <span v-if="activeView === 'board'" class="nav-indicator"></span></a>
+        <a class="nav-link" :class="{ active: activeView === 'backlog' }" href="#backlog" :aria-current="activeView === 'backlog' ? 'page' : undefined"><i class="pi pi-list" aria-hidden="true"></i> Backlog <span v-if="activeView === 'backlog'" class="nav-indicator"></span></a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-note">
@@ -241,21 +351,25 @@ function avatarClass(name: string) {
 
     <main class="main">
       <header class="topbar">
-        <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>Project board</strong></div>
+        <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? 'Project board' : 'Backlog' }}</strong></div>
         <div class="topbar-right"><span class="topbar-label">{{ username }}</span><button class="logout-button" @click="logout">Sign out</button><span class="avatar lavender">{{ initials(username) }}</span></div>
       </header>
-      <div class="content" id="board">
+      <nav class="mobile-nav" aria-label="Workspace navigation">
+        <a class="nav-link" :class="{ active: activeView === 'board' }" href="#board" :aria-current="activeView === 'board' ? 'page' : undefined"><i class="pi pi-th-large" aria-hidden="true"></i> Board</a>
+        <a class="nav-link" :class="{ active: activeView === 'backlog' }" href="#backlog" :aria-current="activeView === 'backlog' ? 'page' : undefined"><i class="pi pi-list" aria-hidden="true"></i> Backlog</a>
+      </nav>
+      <div class="content" :id="activeView">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
         <div class="page-heading">
           <div>
             <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORKSPACE</div>
-            <h1>Project board<span class="heading-dot">.</span></h1>
-            <p>Good things happen when great work comes together.</p>
+            <h1>{{ activeView === 'board' ? 'Project board' : 'Backlog' }}<span class="heading-dot">.</span></h1>
+            <p>{{ activeView === 'board' ? 'Good things happen when great work comes together.' : 'Keep upcoming work here until it is ready for the board.' }}</p>
           </div>
-          <Button label="Create task" icon="pi pi-plus" class="create-button" @click="openTask()" />
+          <Button label="Create task" icon="pi pi-plus" class="create-button" @click="openTask(undefined, activeView === 'backlog' ? 'Backlog' : 'To do')" />
         </div>
 
-        <section class="overview" aria-label="Project overview">
+        <section v-if="activeView === 'board'" class="overview" aria-label="Project overview">
           <div class="overview-main">
             <div class="overview-icon"><i class="pi pi-bolt"></i></div>
             <div><span class="overview-kicker">THE BIG PICTURE</span><h2>Let's make it happen.</h2><p>A little clarity goes a long way. Here's where your work stands.</p></div>
@@ -263,33 +377,33 @@ function avatarClass(name: string) {
           <div class="overview-progress">
             <div class="progress-label"><span>Project progress</span><strong>{{ progress }}%</strong></div>
             <div class="progress-track" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100" aria-label="Project progress"><div :style="{ width: `${progress}%` }"></div></div>
-            <p>{{ completed }} of {{ tasks.length }} tasks completed</p>
+            <p>{{ completed }} of {{ boardTasks.length }} board tasks completed</p>
           </div>
         </section>
 
         <div class="board-header">
-          <div><h2>Board <span class="task-total">{{ tasks.length }}</span></h2><p>All your team's work, in one place.</p></div>
+          <div><h2>{{ activeView === 'board' ? 'Board' : 'Backlog' }} <span class="task-total">{{ activeView === 'board' ? boardTasks.length : tasks.length - boardTasks.length }}</span></h2><p>{{ activeView === 'board' ? 'Drag tasks between columns, or use the arrow buttons to move them.' : 'Move tasks to To do when they are ready to work on.' }}</p></div>
           <div class="filters">
             <label class="search-box"><i class="pi pi-search"></i><span class="sr-only">Search tasks</span><input v-model="search" placeholder="Search tasks..." type="search"></label>
             <label class="filter-box"><i class="pi pi-sliders-h"></i><span class="sr-only">Filter by priority</span><select v-model="priorityFilter"><option>All priorities</option><option v-for="priority in priorities" :key="priority">{{ priority }}</option></select><i class="pi pi-angle-down"></i></label>
           </div>
         </div>
 
-        <div class="board">
-          <section v-for="(status, columnIndex) in statuses" :key="status" class="column" :aria-label="status">
+        <div v-if="activeView === 'board'" class="board">
+          <section v-for="(status, columnIndex) in boardStatuses" :key="status" class="column" :class="{ 'column-drop-target': dropTarget === status }" :aria-label="status" :data-drop-status="status" @dragover="dragOver(status, $event)" @dragleave="dragLeave(status, $event)" @drop="dropTask(status, $event)">
             <div class="column-heading">
               <div><span class="status-dot" :class="`status-${columnIndex}`"></span><h3>{{ status }}</h3><span class="column-count">{{ filteredTasks.filter((task) => task.status === status).length }}</span></div>
               <button class="icon-button" :aria-label="`Add task to ${status}`" @click="openTask(undefined, status)"><i class="pi pi-plus"></i></button>
             </div>
             <div class="task-list">
-              <article v-for="task in filteredTasks.filter((item) => item.status === status)" :key="task.id" class="task-card">
-                <div class="card-top"><span class="task-id">{{ task.id }}</span><button class="icon-button edit-button" :aria-label="`Edit ${task.title}`" @click="openTask(task)"><i class="pi pi-ellipsis-h"></i></button></div>
+              <article v-for="task in filteredTasks.filter((item) => item.status === status)" :key="task.id" class="task-card" :class="{ 'task-dragging': draggedTask?.id === task.id }" :draggable="!busy" @dragstart="startDrag(task, $event)" @dragend="endDrag">
+                <div class="card-top"><span class="task-id">{{ task.id }}</span><div class="card-controls"><span class="drag-handle" aria-hidden="true" title="Drag to move" @touchstart.prevent="startTouchDrag(task, $event)" @touchmove.prevent="moveTouchDrag" @touchend.prevent="endTouchDrag" @touchcancel="endDrag"><i class="pi pi-bars"></i></span><button class="icon-button edit-button" :aria-label="`Edit ${task.title}`" @click="openTask(task)"><i class="pi pi-ellipsis-h"></i></button></div></div>
                 <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
                 <p class="task-description">{{ task.description || 'No description yet.' }}</p>
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
                   <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><span>{{ task.assignee || 'Unassigned' }}</span></div>
-                  <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${statuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < statuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${statuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
+                  <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < boardStatuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
                 </div>
               </article>
               <div v-if="!filteredTasks.some((task) => task.status === status)" class="empty-column">No tasks here yet.</div>
@@ -297,6 +411,18 @@ function avatarClass(name: string) {
             </div>
           </section>
         </div>
+        <section v-else class="backlog-list" aria-label="Backlog tasks">
+          <article v-for="task in backlogTasks" :key="task.id" class="backlog-item">
+            <div class="backlog-details">
+              <span class="task-id">{{ task.id }}</span>
+              <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
+              <p class="task-description">{{ task.description || 'No description yet.' }}</p>
+              <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span><span class="backlog-assignee">{{ task.assignee || 'Unassigned' }}</span></div>
+            </div>
+            <Button label="Move to To do" icon="pi pi-arrow-right" :disabled="busy" :aria-label="`Move ${task.title} to To do`" @click="moveTaskToStatus(task, 'To do')" />
+          </article>
+          <div v-if="!backlogTasks.length" class="empty-column">{{ search || priorityFilter !== 'All priorities' ? 'No matching backlog tasks.' : 'Your backlog is empty. Create a task to get started.' }}</div>
+        </section>
         <footer class="footer"><span>Made for making progress <span class="footer-heart">♥</span></span><span>One task at a time.</span></footer>
       </div>
     </main>

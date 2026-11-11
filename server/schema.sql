@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,
   title VARCHAR(120) NOT NULL,
   description VARCHAR(1000) NOT NULL DEFAULT '',
-  status TEXT NOT NULL CHECK (status IN ('To do', 'In progress', 'Done')),
+  status TEXT NOT NULL CONSTRAINT tasks_status_check CHECK (status IN ('Backlog', 'To do', 'In progress', 'Done')),
   priority TEXT NOT NULL CHECK (priority IN ('Low', 'Medium', 'High')),
   assignee VARCHAR(80) NOT NULL DEFAULT '',
   label VARCHAR(40) NOT NULL DEFAULT '',

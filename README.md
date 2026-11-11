@@ -23,10 +23,14 @@ Run `npm test` for API integration tests and `npm run build` for type-checking a
 3. Use build command `npm ci --include=dev && npm run build` and start command `npm run migrate && npm start`. Including development dependencies is required for Webpack and TypeScript when `NODE_ENV=production`.
 4. Open the service's HTTPS URL and create accounts. The Web Service serves both the frontend and API; a separate static site is not required.
 
-The schema command is idempotent for the initial schema, but future schema changes will need versioned migrations. Use a persistent Render Postgres plan and configure backups appropriate to your needs.
+The startup migration preserves existing tasks and updates the task status constraint to allow backlog tasks. Use a persistent Render Postgres plan and configure backups appropriate to your needs.
 
 ## Accounts and data
 
 Signup is **open to anyone who can reach the site**, and every account can view, create, edit, and delete every task. There is no account approval, password reset, or user administration yet; do not use this for sensitive information until access is restricted. Usernames are case-insensitive, 3–32 characters, and passwords must contain 12–128 characters. Passwords are hashed with scrypt; sessions use HTTP-only, same-site cookies and expire after seven days. The basic login/signup rate limit is per server instance and resets on restart.
 
 Tasks and their status are shared through PostgreSQL. The board refreshes every 15 seconds, and concurrent edits are rejected rather than silently overwriting one another. On a conflict, close and reopen the task after the board refreshes before retrying. Existing browser-local tasks are not imported; the new shared board starts empty.
+
+Use the Backlog tab to create and collect upcoming tasks. Select **Move to To do** when a task is ready for the board. To return a task to the backlog, edit it and change its status to Backlog. The board's task count and progress exclude backlog tasks.
+
+Drag a task to another column to change its status. On touchscreens, drag using the handle in the task's top-right corner. The arrow buttons provide an alternative for keyboard and touch users. Dragging does not reorder tasks within a column.

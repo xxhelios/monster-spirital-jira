@@ -5,6 +5,21 @@ const path = require('node:path');
 const { newDb } = require('pg-mem');
 const { createApp } = require('../server/app.cjs');
 
+test('backlog migration preserves existing tasks and accepts the new status', () => {
+  const db = newDb();
+  const schema = fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8').replace("'Backlog', ", '');
+  db.public.none(schema);
+  db.public.none("INSERT INTO tasks (title, status, priority) VALUES ('Existing task', 'To do', 'Low')");
+  db.public.none(fs.readFileSync(path.join(__dirname, '../server/backlog-migration.sql'), 'utf8'));
+  db.public.none(fs.readFileSync(path.join(__dirname, '../server/backlog-migration.sql'), 'utf8'));
+  db.public.none("INSERT INTO tasks (title, status, priority) VALUES ('Upcoming task', 'Backlog', 'High')");
+  const rows = db.public.many('SELECT title, status FROM tasks ORDER BY id');
+  assert.deepEqual(rows.map(({ title, status }) => ({ title, status })), [
+    { title: 'Existing task', status: 'To do' },
+    { title: 'Upcoming task', status: 'Backlog' },
+  ]);
+});
+
 test('accounts share tasks, sessions are protected, and conflicting updates are rejected', async (t) => {
   const db = newDb();
   db.public.none(fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8'));
@@ -41,6 +56,15 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   const login = await call('/auth/login', 'POST', { username: 'ALICE', password: 'longpassword123' });
   assert.equal(login.status, 200);
   const task = { title: 'Shared work', description: '', status: 'To do', priority: 'High', assignee: 'alice', label: '' };
+  const backlog = await call('/tasks', 'POST', { ...task, title: 'Upcoming', status: 'Backlog' }, alice.cookie);
+  assert.equal(backlog.status, 201);
+  assert.equal((await call('/tasks', 'GET', undefined, bob.cookie)).data.tasks[0].status, 'Backlog');
+  const planned = await call(`/tasks/${backlog.data.task.id}`, 'PUT', { ...backlog.data.task, status: 'To do' }, bob.cookie);
+  assert.equal(planned.data.task.status, 'To do');
+  assert.equal((await call(`/tasks/${backlog.data.task.id}`, 'PUT', { ...backlog.data.task, status: 'To do' }, alice.cookie)).status, 409);
+  const returned = await call(`/tasks/${backlog.data.task.id}`, 'PUT', { ...planned.data.task, status: 'Backlog' }, alice.cookie);
+  assert.equal(returned.data.task.status, 'Backlog');
+  assert.equal((await call(`/tasks/${backlog.data.task.id}`, 'DELETE', { version: returned.data.task.version }, alice.cookie)).status, 200);
   assert.equal((await call('/tasks', 'POST', { ...task, status: 'invalid' }, alice.cookie)).status, 400);
   const created = await call('/tasks', 'POST', task, alice.cookie);
   assert.equal(created.status, 201);

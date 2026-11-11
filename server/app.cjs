@@ -9,7 +9,7 @@ const path = require('node:path');
 const scrypt = promisify(scryptCallback);
 const cookieName = 'orbit_session';
 const sessionDuration = 7 * 24 * 60 * 60 * 1000;
-const statuses = ['To do', 'In progress', 'Done'];
+const statuses = ['Backlog', 'To do', 'In progress', 'Done'];
 const priorities = ['Low', 'Medium', 'High'];
 const tokenHash = (token) => createHash('sha256').update(token).digest('hex');
 const taskFromRow = (row) => ({ ...row, id: `ORB-${row.id}` });

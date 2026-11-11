@@ -1,4 +1,5 @@
-export const statuses = ['To do', 'In progress', 'Done'] as const;
+export const boardStatuses = ['To do', 'In progress', 'Done'] as const;
+export const statuses = ['Backlog', ...boardStatuses] as const;
 export const priorities = ['Low', 'Medium', 'High'] as const;
 
 export type Status = (typeof statuses)[number];
