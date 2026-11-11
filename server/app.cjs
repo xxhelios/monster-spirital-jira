@@ -202,6 +202,29 @@ function createApp(pool, options = {}) {
     if (!result.rowCount) return res.status(409).json({ error: 'This project changed. Refresh and try again.' });
     res.json({ project: result.rows[0] });
   }));
+  app.delete('/api/projects/:projectId', authenticate, asyncRoute(async (req, res) => {
+    if (!Number.isSafeInteger(req.body?.version) || req.body.version < 1) {
+      return res.status(400).json({ error: 'Invalid project version.' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const project = await client.query('SELECT version FROM projects WHERE id = $1 FOR UPDATE', [req.params.projectId]);
+      if (!project.rowCount || project.rows[0].version !== req.body.version) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'This project changed or was deleted. Refresh and try again.' });
+      }
+      await client.query('DELETE FROM tasks WHERE project_id = $1', [req.params.projectId]);
+      await client.query('DELETE FROM projects WHERE id = $1', [req.params.projectId]);
+      await client.query('COMMIT');
+      res.json({ ok: true });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }));
   const activeProject = asyncRoute(async (req, res, next) => {
     const result = await pool.query('SELECT id FROM projects WHERE id = $1 AND archived = false', [req.params.projectId]);
     if (!result.rowCount) return res.status(404).json({ error: 'Project not found or archived.' });
@@ -214,7 +237,13 @@ function createApp(pool, options = {}) {
   app.post('/api/projects/:projectId/tasks', authenticate, activeProject, asyncRoute(async (req, res) => {
     if (!validTask(req.body)) return res.status(400).json({ error: 'Invalid task details.' });
     const { title, description, status, priority, assignee, label } = req.body;
-    const result = await pool.query('INSERT INTO tasks (title, description, status, priority, assignee, label, project_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title, description, status, priority, assignee, label, version', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim(), req.params.projectId]);
+    let result;
+    try {
+      result = await pool.query('INSERT INTO tasks (title, description, status, priority, assignee, label, project_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title, description, status, priority, assignee, label, version', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim(), req.params.projectId]);
+    } catch (error) {
+      if (error.code === '23503') return res.status(404).json({ error: 'Project not found or archived.' });
+      throw error;
+    }
     res.status(201).json({ task: taskFromRow(result.rows[0]) });
   }));
   app.put('/api/projects/:projectId/tasks/:id', authenticate, activeProject, asyncRoute(async (req, res) => {

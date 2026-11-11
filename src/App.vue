@@ -6,6 +6,7 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import Textarea from 'primevue/textarea';
 import AssigneeSelect from './AssigneeSelect.vue';
+import ConfirmationDialog from './ConfirmationDialog.vue';
 import { ApiError, request } from './api';
 import { boardStatuses, priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
 
@@ -33,6 +34,22 @@ const usersError = ref('');
 const usersLoading = ref(false);
 let usersGeneration = 0;
 type Project = { id: string; title: string; version: number; archived: boolean; total: number; completed: number };
+type Confirmation =
+  | { kind: 'archive-project'; project: Project }
+  | { kind: 'delete-project'; project: Project }
+  | { kind: 'delete-task'; id: string; projectId: string; version: number };
+const confirmation = ref<Confirmation | null>(null);
+const confirmationContent = computed(() => {
+  const action = confirmation.value;
+  if (!action) return { title: '', message: '', confirmLabel: '', destructive: false };
+  if (action.kind === 'archive-project') return {
+    title: 'Archive project', message: `Archive "${action.project.title}"? Its tasks will be preserved.`, confirmLabel: 'Archive', destructive: false,
+  };
+  if (action.kind === 'delete-project') return {
+    title: 'Delete project', message: `Permanently delete "${action.project.title}" and all its board and backlog tickets? This cannot be undone.`, confirmLabel: 'Delete project', destructive: true,
+  };
+  return { title: 'Delete task', message: 'Delete this task? This cannot be undone.', confirmLabel: 'Delete task', destructive: true };
+});
 const projects = ref<Project[]>([]);
 const projectId = ref<string | null>(null);
 const board = computed(() => projects.value.find((project) => project.id === projectId.value && !project.archived) ?? null);
@@ -78,6 +95,7 @@ function handleError(error: unknown) {
     boardLoadError.value = '';
     editingTitle.value = false;
     dialogVisible.value = false;
+    confirmation.value = null;
     accountDialog.value = null;
     accountMenuOpen.value = false;
     clearAccountForm();
@@ -304,6 +322,7 @@ async function logout() {
     username.value = '';
     tasks.value = [];
     dialogVisible.value = false;
+    confirmation.value = null;
     users.value = [];
     usersError.value = '';
     usersLoading.value = false;
@@ -320,6 +339,7 @@ async function logout() {
 }
 
 function syncView() {
+  confirmation.value = null;
   const hash = window.location.hash;
   const match = /^#project\/([a-zA-Z0-9-]+)\/(board|backlog)$/.exec(hash);
   projectId.value = match ? match[1] : hash === '#board' || hash === '#backlog' ? 'default' : null;
@@ -396,11 +416,37 @@ async function createProject() {
 }
 
 async function setArchived(project: Project, archived: boolean) {
-  if (archived && !window.confirm(`Archive "${project.title}"? Its tasks will be preserved.`)) return;
+  if (archived) {
+    confirmation.value = { kind: 'archive-project', project };
+    return;
+  }
+  await updateArchived(project, false);
+}
+
+async function updateArchived(project: Project, archived: boolean) {
   projectBusy.value = true;
   projectError.value = '';
   try {
     await request(`/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { title: project.title, version: project.version, archived } });
+    await refreshBoard();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else projectError.value = message(error);
+    if (error instanceof ApiError && error.status === 409) await refreshBoard();
+  } finally {
+    projectBusy.value = false;
+  }
+}
+
+function deleteProject(project: Project) {
+  confirmation.value = { kind: 'delete-project', project };
+}
+
+async function performDeleteProject(project: Project) {
+  projectBusy.value = true;
+  projectError.value = '';
+  try {
+    await request(`/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE', body: { version: project.version } });
     await refreshBoard();
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) handleError(error);
@@ -467,21 +513,34 @@ async function saveTask() {
   }
 }
 
-async function deleteTask() {
-  if (editingId.value && projectId.value && window.confirm('Delete this task? This cannot be undone.')) {
-    busy.value = true;
-    ++refreshGeneration;
-    try {
-      await request(`/projects/${encodeURIComponent(projectId.value)}/tasks/${editingId.value}`, { method: 'DELETE', body: { version: editingVersion.value } });
-      dialogVisible.value = false;
-      await refreshTasks();
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) handleError(error);
-      else formError.value = message(error);
-    } finally {
-      busy.value = false;
-    }
+function deleteTask() {
+  if (editingId.value && projectId.value && editingVersion.value !== null) {
+    confirmation.value = { kind: 'delete-task', id: editingId.value, projectId: projectId.value, version: editingVersion.value };
   }
+}
+
+async function performDeleteTask(task: Extract<Confirmation, { kind: 'delete-task' }>) {
+  busy.value = true;
+  ++refreshGeneration;
+  try {
+    await request(`/projects/${encodeURIComponent(task.projectId)}/tasks/${task.id}`, { method: 'DELETE', body: { version: task.version } });
+    dialogVisible.value = false;
+    await refreshTasks();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else formError.value = message(error);
+  } finally {
+    busy.value = false;
+  }
+}
+
+function confirmAction() {
+  const action = confirmation.value;
+  confirmation.value = null;
+  if (!action) return;
+  if (action.kind === 'archive-project') void updateArchived(action.project, true);
+  else if (action.kind === 'delete-project') void performDeleteProject(action.project);
+  else void performDeleteTask(action);
 }
 
 async function moveTaskToStatus(task: Task, nextStatus: Status) {
@@ -697,11 +756,14 @@ function ticketColor(name: string) {
               <div class="progress-label"><span>Project progress</span><strong>{{ projectProgress(project) }}%</strong></div>
               <div class="progress-track" role="progressbar" :aria-label="`${project.title} progress`" :aria-valuenow="projectProgress(project)" aria-valuemin="0" aria-valuemax="100"><div :style="{ width: `${projectProgress(project)}%` }"></div></div>
               <p>{{ project.completed }} of {{ project.total }} board tasks completed</p>
-              <button class="project-archive" :disabled="projectBusy" @click="setArchived(project, true)">Archive</button>
+              <div class="project-actions">
+                <button class="project-archive" :disabled="projectBusy" :aria-label="`Archive ${project.title}`" @click="setArchived(project, true)">Archive</button>
+                <button class="project-delete" :disabled="projectBusy" :aria-label="`Delete ${project.title}`" @click="deleteProject(project)">Delete</button>
+              </div>
             </article>
             <p v-if="!activeProjects.length && !boardLoadError" class="empty-column">No active projects yet.</p>
           </div>
-          <section v-if="archivedProjects.length" class="archived-projects"><h2 class="projects-heading">Archived projects</h2><div v-for="project in archivedProjects" :key="project.id" class="archived-project"><strong>{{ project.title }}</strong><button class="project-archive" :disabled="projectBusy" @click="setArchived(project, false)">Restore</button></div></section>
+          <section v-if="archivedProjects.length" class="archived-projects"><h2 class="projects-heading">Archived projects</h2><div v-for="project in archivedProjects" :key="project.id" class="archived-project"><strong>{{ project.title }}</strong><div class="project-actions"><button class="project-archive" :disabled="projectBusy" :aria-label="`Restore ${project.title}`" @click="setArchived(project, false)">Restore</button><button class="project-delete" :disabled="projectBusy" :aria-label="`Delete ${project.title}`" @click="deleteProject(project)">Delete</button></div></div></section>
         </template>
         <template v-else-if="board">
 
@@ -810,5 +872,6 @@ function ticketColor(name: string) {
         </div>
       </form>
     </Dialog>
+    <ConfirmationDialog :visible="confirmation !== null" v-bind="confirmationContent" @cancel="confirmation = null" @confirm="confirmAction" />
   </div>
 </template>

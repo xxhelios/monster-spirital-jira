@@ -28,9 +28,15 @@ CREATE TABLE IF NOT EXISTS projects (
   version INTEGER NOT NULL DEFAULT 1,
   archived BOOLEAN NOT NULL DEFAULT FALSE
 );
+CREATE TABLE IF NOT EXISTS app_migrations (
+  name TEXT PRIMARY KEY
+);
 INSERT INTO projects (id, title, version)
-  SELECT 'default', title, version FROM board_settings WHERE id = 1
+  SELECT 'default', title, version FROM board_settings
+  WHERE id = 1 AND NOT EXISTS (SELECT 1 FROM app_migrations WHERE name = 'default_project_initialized')
   ON CONFLICT (id) DO NOTHING;
+INSERT INTO app_migrations (name) VALUES ('default_project_initialized')
+  ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,

@@ -5,16 +5,24 @@ const path = require('node:path');
 const { newDb } = require('pg-mem');
 const { createApp } = require('../server/app.cjs');
 
+function initializeDefaultProject(db, schema) {
+  const initialization = schema.match(/INSERT INTO projects \(id, title, version\)[\s\S]*?ON CONFLICT \(name\) DO NOTHING;/);
+  assert.ok(initialization);
+  db.public.none(initialization[0]);
+}
+
 test('existing board name and tasks migrate to the original project', () => {
   const db = newDb();
   db.public.none("CREATE TABLE board_settings (id integer primary key, title text not null, version integer not null); INSERT INTO board_settings VALUES (1, 'Existing team', 4); CREATE TABLE tasks (id serial primary key, title text not null); INSERT INTO tasks (title) VALUES ('Existing task')");
   db.public.none('CREATE TABLE projects (id text primary key, title varchar(120) not null, version integer not null default 1, archived boolean not null default false)');
-  db.public.none("INSERT INTO projects (id, title, version) SELECT 'default', title, version FROM board_settings WHERE id = 1 ON CONFLICT (id) DO NOTHING");
+  db.public.none('CREATE TABLE app_migrations (name text primary key)');
+  const schema = fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8');
+  initializeDefaultProject(db, schema);
   db.public.none("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default' REFERENCES projects(id)");
   assert.equal(db.public.one("SELECT title FROM projects WHERE id = 'default'").title, 'Existing team');
   assert.equal(db.public.one('SELECT project_id FROM tasks').project_id, 'default');
   db.public.none("UPDATE projects SET title = 'Renamed' WHERE id = 'default'");
-  db.public.none("INSERT INTO projects (id, title, version) SELECT 'default', title, version FROM board_settings WHERE id = 1 ON CONFLICT (id) DO NOTHING");
+  initializeDefaultProject(db, schema);
   assert.equal(db.public.one("SELECT title FROM projects WHERE id = 'default'").title, 'Renamed');
 });
 
@@ -34,6 +42,59 @@ test('status migration preserves existing tasks and is repeatable with review ta
     { title: 'Upcoming task', status: 'Backlog' },
     { title: 'Review task', status: 'In Review' },
   ]);
+});
+
+test('default project initialization does not recreate a deleted project', () => {
+  const db = newDb();
+  const schema = fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8');
+  db.public.none(schema);
+  assert.equal(db.public.one("SELECT title FROM projects WHERE id = 'default'").title, 'Project board');
+  db.public.none("DELETE FROM projects WHERE id = 'default'");
+  initializeDefaultProject(db, schema);
+  assert.equal(db.public.many("SELECT id FROM projects WHERE id = 'default'").length, 0);
+});
+
+test('project deletion removes only its tickets and rejects stale versions', async (t) => {
+  const db = newDb();
+  db.public.none(fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8'));
+  const { Pool } = db.adapters.createPg();
+  const pool = new Pool();
+  const server = createApp(pool, { secureCookies: false }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await pool.end();
+  });
+  const base = `http://127.0.0.1:${server.address().port}/api`;
+  async function call(url, method = 'GET', body, cookie) {
+    const response = await fetch(base + url, {
+      method,
+      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, data: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
+  }
+  const user = await call('/auth/signup', 'POST', { username: 'owner', password: 'password1' });
+  const other = await call('/auth/signup', 'POST', { username: 'teammate', password: 'password1' });
+  const project = (await call('/projects', 'POST', { title: 'Remove me' }, user.cookie)).data.project;
+  const task = { title: 'Board ticket', description: '', status: 'To do', priority: 'Low', assignee: '', label: '' };
+  await call(`/projects/${project.id}/tasks`, 'POST', task, user.cookie);
+  await call(`/projects/${project.id}/tasks`, 'POST', { ...task, title: 'Backlog ticket', status: 'Backlog' }, user.cookie);
+  await call('/projects/default/tasks', 'POST', { ...task, title: 'Keep me' }, user.cookie);
+  assert.equal((await call(`/projects/${project.id}`, 'DELETE', { version: 1 })).status, 401);
+  assert.equal((await call(`/projects/${project.id}`, 'DELETE', {}, user.cookie)).status, 400);
+  const archived = (await call(`/projects/${project.id}`, 'PATCH', { ...project, archived: true }, other.cookie)).data.project;
+  assert.equal((await call(`/projects/${project.id}`, 'DELETE', { version: 1 }, user.cookie)).status, 409);
+  assert.equal(db.public.many(`SELECT id FROM tasks WHERE project_id = '${project.id}'`).length, 2);
+  assert.equal((await call(`/projects/${project.id}`, 'DELETE', { version: archived.version }, user.cookie)).status, 200);
+  assert.equal((await call('/projects', 'GET', undefined, other.cookie)).data.projects.some((item) => item.id === project.id), false);
+  assert.equal(db.public.many(`SELECT id FROM tasks WHERE project_id = '${project.id}'`).length, 0);
+  assert.equal((await call('/projects/default/tasks', 'GET', undefined, other.cookie)).data.tasks[0].title, 'Keep me');
+  assert.equal((await call(`/projects/${project.id}`, 'DELETE', { version: archived.version }, user.cookie)).status, 409);
+  assert.equal((await call('/projects/default', 'DELETE', { version: 1 }, user.cookie)).status, 200);
+  assert.equal(db.public.many('SELECT id FROM tasks').length, 0);
+  initializeDefaultProject(db, fs.readFileSync(path.join(__dirname, '../server/schema.sql'), 'utf8'));
+  assert.equal((await call('/projects', 'GET', undefined, other.cookie)).data.projects.length, 0);
 });
 
 test('accent color migration preserves existing users and is repeatable', () => {
