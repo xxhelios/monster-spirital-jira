@@ -7,6 +7,7 @@ import Select from 'primevue/select';
 import Textarea from 'primevue/textarea';
 import AssigneeSelect from './AssigneeSelect.vue';
 import ConfirmationDialog from './ConfirmationDialog.vue';
+import logoUrl from './assets/logo.png.jpeg';
 import { ApiError, request } from './api';
 import { boardStatuses, priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
 
@@ -714,7 +715,7 @@ function ticketColor(name: string) {
   <div v-if="loading" class="auth-page"><p>Loading your workspace...</p></div>
   <div v-else-if="!username" class="auth-page">
     <div class="auth-card">
-      <div class="brand"><span class="brand-mark"><i class="pi pi-compass"></i></span><span>Monster Spirital Company<span class="brand-dot">.</span></span></div>
+      <div class="brand"><img class="brand-mark" :src="logoUrl" alt=""><span>Monster Spirital Company<span class="brand-dot">.</span></span></div>
       <h1>{{ authMode === 'login' ? 'Welcome back.' : 'Join the workspace.' }}</h1>
       <p>{{ authMode === 'login' ? 'Sign in to see your team’s board.' : 'Create an account to start working together.' }}</p>
       <form class="task-form" @submit.prevent="authenticate">
@@ -732,7 +733,7 @@ function ticketColor(name: string) {
   <div v-else class="app-shell" :class="{ 'sidebar-resizing': sidebarResizing }">
     <aside id="workspace-sidebar" ref="sidebarElement" class="sidebar" :style="sidebarWidth === null ? undefined : { width: `${sidebarWidth}px`, flexBasis: `${sidebarWidth}px` }">
       <a class="brand" href="#" aria-label="Monster Spirital Company home">
-        <span class="brand-mark"><i class="pi pi-compass"></i></span>
+        <img class="brand-mark" :src="logoUrl" alt="">
         <span>Monster Spirital Company<span class="brand-dot">.</span></span>
       </a>
       <p class="nav-label">WORKSPACE</p>
