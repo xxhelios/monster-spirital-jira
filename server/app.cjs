@@ -2,7 +2,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
-const { randomBytes, scrypt: scryptCallback, timingSafeEqual, createHash } = require('node:crypto');
+const { randomBytes, randomUUID, scrypt: scryptCallback, timingSafeEqual, createHash } = require('node:crypto');
 const { promisify } = require('node:util');
 const path = require('node:path');
 
@@ -110,42 +110,62 @@ function createApp(pool, options = {}) {
     const result = await pool.query('SELECT username FROM users ORDER BY username');
     res.json({ users: result.rows });
   }));
-  app.get('/api/board', authenticate, asyncRoute(async (req, res) => {
-    const result = await pool.query('SELECT title, version FROM board_settings WHERE id = 1');
-    if (!result.rows[0]) throw new Error('Board settings are missing; run the database migration.');
-    res.json({ board: result.rows[0] });
-  }));
-  app.put('/api/board', authenticate, asyncRoute(async (req, res) => {
-    if (!req.body || typeof req.body.title !== 'string' || !req.body.title.trim() ||
-      req.body.title.trim().length > 120 || !Number.isSafeInteger(req.body.version) || req.body.version < 1) {
-      return res.status(400).json({ error: 'Board title must be between 1 and 120 characters.' });
+  app.get('/api/projects', authenticate, asyncRoute(async (req, res) => {
+    const projects = await pool.query('SELECT id, title, version, archived FROM projects ORDER BY title, id');
+    const tasks = await pool.query('SELECT project_id, status FROM tasks');
+    const counts = new Map();
+    for (const task of tasks.rows) {
+      if (task.status === 'Backlog') continue;
+      const count = counts.get(task.project_id) || { total: 0, completed: 0 };
+      count.total++;
+      if (task.status === 'Done') count.completed++;
+      counts.set(task.project_id, count);
     }
-    const result = await pool.query('UPDATE board_settings SET title = $1, version = version + 1 WHERE id = 1 AND version = $2 RETURNING title, version', [req.body.title.trim(), req.body.version]);
-    if (!result.rowCount) return res.status(409).json({ error: 'The board title was changed by someone else. Review your title and save again.' });
-    res.json({ board: result.rows[0] });
+    res.json({ projects: projects.rows.map((project) => ({ ...project, ...(counts.get(project.id) || { total: 0, completed: 0 }) })) });
   }));
-  app.get('/api/tasks', authenticate, asyncRoute(async (req, res) => {
-    const result = await pool.query('SELECT id, title, description, status, priority, assignee, label, version FROM tasks ORDER BY id');
+  app.post('/api/projects', authenticate, asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body.title !== 'string' || !req.body.title.trim() || req.body.title.trim().length > 120) {
+      return res.status(400).json({ error: 'Project title must be between 1 and 120 characters.' });
+    }
+    const result = await pool.query('INSERT INTO projects (id, title) VALUES ($1, $2) RETURNING id, title, version, archived', [randomUUID(), req.body.title.trim()]);
+    res.status(201).json({ project: result.rows[0] });
+  }));
+  app.patch('/api/projects/:projectId', authenticate, asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body.title !== 'string' || !req.body.title.trim() ||
+      req.body.title.trim().length > 120 || typeof req.body.archived !== 'boolean' || !Number.isSafeInteger(req.body.version) || req.body.version < 1) {
+      return res.status(400).json({ error: 'Invalid project details.' });
+    }
+    const result = await pool.query('UPDATE projects SET title = $1, archived = $2, version = version + 1 WHERE id = $3 AND version = $4 RETURNING id, title, version, archived', [req.body.title.trim(), req.body.archived, req.params.projectId, req.body.version]);
+    if (!result.rowCount) return res.status(409).json({ error: 'This project changed. Refresh and try again.' });
+    res.json({ project: result.rows[0] });
+  }));
+  const activeProject = asyncRoute(async (req, res, next) => {
+    const result = await pool.query('SELECT id FROM projects WHERE id = $1 AND archived = false', [req.params.projectId]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Project not found or archived.' });
+    next();
+  });
+  app.get('/api/projects/:projectId/tasks', authenticate, activeProject, asyncRoute(async (req, res) => {
+    const result = await pool.query('SELECT id, title, description, status, priority, assignee, label, version FROM tasks WHERE project_id = $1 ORDER BY id', [req.params.projectId]);
     res.json({ tasks: result.rows.map(taskFromRow) });
   }));
-  app.post('/api/tasks', authenticate, asyncRoute(async (req, res) => {
+  app.post('/api/projects/:projectId/tasks', authenticate, activeProject, asyncRoute(async (req, res) => {
     if (!validTask(req.body)) return res.status(400).json({ error: 'Invalid task details.' });
     const { title, description, status, priority, assignee, label } = req.body;
-    const result = await pool.query('INSERT INTO tasks (title, description, status, priority, assignee, label) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim()]);
+    const result = await pool.query('INSERT INTO tasks (title, description, status, priority, assignee, label, project_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title, description, status, priority, assignee, label, version', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim(), req.params.projectId]);
     res.status(201).json({ task: taskFromRow(result.rows[0]) });
   }));
-  app.put('/api/tasks/:id', authenticate, asyncRoute(async (req, res) => {
+  app.put('/api/projects/:projectId/tasks/:id', authenticate, activeProject, asyncRoute(async (req, res) => {
     const id = taskId(req.params.id);
     if (!id || !validTask(req.body) || !Number.isSafeInteger(req.body.version) || req.body.version < 1) return res.status(400).json({ error: 'Invalid task details.' });
     const { title, description, status, priority, assignee, label, version } = req.body;
-    const result = await pool.query('UPDATE tasks SET title=$1, description=$2, status=$3, priority=$4, assignee=$5, label=$6, version=version+1 WHERE id=$7 AND version=$8 RETURNING *', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim(), id, version]);
+    const result = await pool.query('UPDATE tasks SET title=$1, description=$2, status=$3, priority=$4, assignee=$5, label=$6, version=version+1 WHERE id=$7 AND version=$8 AND project_id=$9 RETURNING id, title, description, status, priority, assignee, label, version', [title.trim(), description.trim(), status, priority, assignee.trim(), label.trim(), id, version, req.params.projectId]);
     if (!result.rowCount) return res.status(409).json({ error: 'This task was changed or deleted by someone else. Refresh and try again.' });
     res.json({ task: taskFromRow(result.rows[0]) });
   }));
-  app.delete('/api/tasks/:id', authenticate, asyncRoute(async (req, res) => {
+  app.delete('/api/projects/:projectId/tasks/:id', authenticate, activeProject, asyncRoute(async (req, res) => {
     const id = taskId(req.params.id);
     if (!id || !Number.isSafeInteger(req.body?.version) || req.body.version < 1) return res.status(400).json({ error: 'Invalid task details.' });
-    const result = await pool.query('DELETE FROM tasks WHERE id=$1 AND version=$2', [id, req.body.version]);
+    const result = await pool.query('DELETE FROM tasks WHERE id=$1 AND version=$2 AND project_id=$3', [id, req.body.version, req.params.projectId]);
     if (!result.rowCount) return res.status(409).json({ error: 'This task was changed or deleted by someone else. Refresh and try again.' });
     res.json({ ok: true });
   }));

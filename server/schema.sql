@@ -21,8 +21,19 @@ CREATE TABLE IF NOT EXISTS board_settings (
 INSERT INTO board_settings (id, title) VALUES (1, 'Project board')
   ON CONFLICT (id) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  title VARCHAR(120) NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  archived BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO projects (id, title, version)
+  SELECT 'default', title, version FROM board_settings WHERE id = 1
+  ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,
+  project_id TEXT NOT NULL DEFAULT 'default' REFERENCES projects(id),
   title VARCHAR(120) NOT NULL,
   description VARCHAR(1000) NOT NULL DEFAULT '',
   status TEXT NOT NULL CONSTRAINT tasks_status_check CHECK (status IN ('Backlog', 'To do', 'In progress', 'Done')),

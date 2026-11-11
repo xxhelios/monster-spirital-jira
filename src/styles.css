@@ -31,6 +31,13 @@ a { color: inherit; text-decoration: none; }
 .nav-link.active { background: #f0eefc; color: #6d5dde; }
 .nav-indicator { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: #7564e6; }
 .mobile-nav { display: none; }
+.project-sidebar-title { padding: 18px 12px 4px; min-width: 0; }
+.project-title-button { max-width: 100%; padding: 0; border: 0; background: transparent; color: #34364a; font-size: 13px; font-weight: 700; text-align: left; overflow-wrap: anywhere; }
+.project-title-button .pi { color: #a4a5b3; font-size: 11px; }
+.project-title-editor { display: flex; gap: 5px; }
+.project-title-editor input { min-width: 0; width: 100%; padding: 6px; border: 1px solid #c9c4ed; border-radius: 6px; }
+.project-sidebar-title .form-error, .mobile-project-title .form-error { display: block; margin-top: 5px; }
+.mobile-project-title { display: none; }
 .sidebar-bottom { margin-top: auto; }
 .sidebar-note { padding: 18px 15px; border-radius: 12px; background: #f5f3ff; color: #45405e; }
 .note-icon { width: 29px; height: 29px; display: grid; place-items: center; margin-bottom: 12px; color: #7866e4; background: white; border-radius: 9px; }
@@ -64,6 +71,20 @@ h1 { margin-top: 9px; font-size: clamp(29px, 3vw, 37px); font-weight: 800; lette
 .board-title-editor { display: flex; align-items: center; gap: 8px; max-width: 100%; }
 .board-title-editor input { min-width: 0; width: min(100%, 430px); padding: 3px 6px; border: 1px solid #c9c4ed; border-radius: 6px; color: inherit; background: #fff; font: 800 clamp(24px, 3vw, 37px) 'Manrope', sans-serif; letter-spacing: -1.6px; }
 .title-save { padding: 7px 10px; border: 0; border-radius: 6px; background: #6d5ce6; color: white; font-size: 11px; font-weight: 700; }
+.project-create { margin-top: 28px; display: grid; gap: 8px; max-width: 480px; }
+.project-create label { font-size: 12px; font-weight: 700; }
+.project-create > div { display: flex; gap: 8px; }
+.project-create .p-inputtext { flex: 1; min-width: 0; }
+.projects-heading { margin: 35px 0 16px; font-size: 18px; }
+.projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.project-card { padding: 20px; border: 1px solid #eae8fa; border-radius: 12px; background: #fff; }
+.project-card-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 24px; color: #34364a; font: 800 15px 'Manrope', sans-serif; overflow-wrap: anywhere; }
+.project-card-title:hover { color: #6d5ce6; }
+.project-card-title .pi { font-size: 12px; flex-shrink: 0; }
+.project-card p { margin-top: 8px; color: #9894ae; font-size: 11px; }
+.project-archive { margin-top: 18px; padding: 0; border: 0; background: transparent; color: #6d5ce6; font-size: 12px; font-weight: 700; }
+.archived-project { display: flex; align-items: center; justify-content: space-between; max-width: 480px; padding: 14px; border-bottom: 1px solid #e9eaf1; font-size: 13px; }
+.archived-project .project-archive { margin: 0; }
 .board-title-area .form-error { display: block; margin-top: 5px; }
 .page-heading p { margin-top: 8px; color: #9093a5; font-size: 13px; }
 .create-button.p-button { background: #6d5ce6; border-color: #6d5ce6; border-radius: 9px; padding: 12px 17px; font-size: 12px; font-weight: 700; box-shadow: 0 5px 12px #7462e62b; }
@@ -179,6 +200,7 @@ h1 { margin-top: 9px; font-size: clamp(29px, 3vw, 37px); font-weight: 800; lette
 @media (max-width: 760px) {
   .sidebar { display: none; }
   .mobile-nav { display: flex; gap: 6px; padding: 8px 18px; background: #fff; border-bottom: 1px solid #eeeff5; }
+  .mobile-project-title { display: block; padding: 12px 18px 0; }
   .topbar { height: 58px; }
   .content { padding: 30px 18px 20px; }
   .page-heading { align-items: start; }
@@ -186,6 +208,7 @@ h1 { margin-top: 9px; font-size: clamp(29px, 3vw, 37px); font-weight: 800; lette
   .overview-progress { width: 100%; }
   .board-header { align-items: start; flex-direction: column; }
   .filters { width: 100%; }
+  .filters { flex-wrap: wrap; }
   .search-box { flex: 1; }
   .search-box input { width: 100%; }
   .board { grid-template-columns: 1fr; }

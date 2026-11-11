@@ -21,18 +21,27 @@ const users = ref<string[]>([]);
 const usersError = ref('');
 const usersLoading = ref(false);
 let usersGeneration = 0;
-const board = ref<{ title: string; version: number } | null>(null);
+type Project = { id: string; title: string; version: number; archived: boolean; total: number; completed: number };
+const projects = ref<Project[]>([]);
+const projectId = ref<string | null>(null);
+const board = computed(() => projects.value.find((project) => project.id === projectId.value && !project.archived) ?? null);
+const activeProjects = computed(() => projects.value.filter((project) => !project.archived));
+const archivedProjects = computed(() => projects.value.filter((project) => project.archived));
+const newProjectTitle = ref('');
+const projectError = ref('');
+const projectBusy = ref(false);
 const boardLoadError = ref('');
 const editingTitle = ref(false);
 const titleDraft = ref('');
 const titleError = ref('');
 const titleSaving = ref(false);
 const titleInput = ref<HTMLInputElement | null>(null);
+const mobileTitleInput = ref<HTMLInputElement | null>(null);
 const titleEditVersion = ref<number | null>(null);
 const titleOriginal = ref('');
 let boardGeneration = 0;
 const busy = ref(false);
-const activeView = ref<'board' | 'backlog'>(window.location.hash === '#backlog' ? 'backlog' : 'board');
+const activeView = ref<'workspace' | 'board' | 'backlog'>('workspace');
 const draggedTask = ref<Task | null>(null);
 const dropTarget = ref<Status | null>(null);
 let touchStartPosition: { x: number; y: number } | null = null;
@@ -54,7 +63,7 @@ function handleError(error: unknown) {
     usersError.value = '';
     ++usersGeneration;
     usersLoading.value = false;
-    board.value = null;
+    projects.value = [];
     boardLoadError.value = '';
     editingTitle.value = false;
     dialogVisible.value = false;
@@ -85,10 +94,12 @@ async function refreshUsers() {
 }
 
 async function refreshTasks() {
+  const currentProject = projectId.value;
+  if (!currentProject || activeView.value === 'workspace') return;
   const generation = ++refreshGeneration;
   try {
-    const result = await request<{ tasks: Task[] }>('/tasks');
-    if (generation === refreshGeneration && username.value) {
+    const result = await request<{ tasks: Task[] }>(`/projects/${encodeURIComponent(currentProject)}/tasks`);
+    if (generation === refreshGeneration && username.value && projectId.value === currentProject) {
       tasks.value = result.tasks;
       notice.value = '';
     }
@@ -101,9 +112,9 @@ async function refreshBoard(force = false) {
   const generation = ++boardGeneration;
   const currentUser = username.value;
   try {
-    const result = await request<{ board: { title: string; version: number } }>('/board');
+    const result = await request<{ projects: Project[] }>('/projects');
     if (generation === boardGeneration && currentUser && username.value === currentUser && (force || !editingTitle.value)) {
-      board.value = result.board;
+      projects.value = result.projects;
       boardLoadError.value = '';
       return true;
     }
@@ -125,8 +136,9 @@ async function editTitle() {
   titleError.value = '';
   editingTitle.value = true;
   await nextTick();
-  titleInput.value?.focus();
-  titleInput.value?.select();
+  const input = titleInput.value?.getClientRects().length ? titleInput.value : mobileTitleInput.value;
+  input?.focus();
+  input?.select();
 }
 
 async function saveTitle() {
@@ -145,17 +157,20 @@ async function saveTitle() {
   titleError.value = '';
   const generation = ++boardGeneration;
   const currentUser = username.value;
+  const currentProject = board.value;
   try {
-    const result = await request<{ board: { title: string; version: number } }>('/board', {
-      method: 'PUT', body: { title, version: titleEditVersion.value },
+    await request(`/projects/${encodeURIComponent(currentProject.id)}`, {
+      method: 'PATCH', body: { title, archived: false, version: titleEditVersion.value },
     });
-    if (generation === boardGeneration && username.value === currentUser) {
-      board.value = result.board;
-      editingTitle.value = false;
+    if (username.value === currentUser) {
+      if (projectId.value === currentProject.id) editingTitle.value = false;
+      await refreshBoard();
     }
   } catch (error) {
-    if (generation !== boardGeneration || username.value !== currentUser) return;
+    if (username.value !== currentUser) return;
     if (error instanceof ApiError && error.status === 401) handleError(error);
+    else if (projectId.value !== currentProject.id || !editingTitle.value) handleError(error);
+    else if (generation !== boardGeneration) handleError(error);
     else {
       titleError.value = message(error);
       if (error instanceof ApiError && error.status === 409 && await refreshBoard(true) && board.value) {
@@ -202,10 +217,11 @@ async function logout() {
     ++usersGeneration;
     username.value = '';
     tasks.value = [];
+    dialogVisible.value = false;
     users.value = [];
     usersError.value = '';
     usersLoading.value = false;
-    board.value = null;
+    projects.value = [];
     boardLoadError.value = '';
     editingTitle.value = false;
     notice.value = '';
@@ -215,14 +231,23 @@ async function logout() {
 }
 
 function syncView() {
-  activeView.value = window.location.hash === '#backlog' ? 'backlog' : 'board';
+  const hash = window.location.hash;
+  const match = /^#project\/([a-zA-Z0-9-]+)\/(board|backlog)$/.exec(hash);
+  projectId.value = match ? match[1] : hash === '#board' || hash === '#backlog' ? 'default' : null;
+  activeView.value = match ? (match[2] === 'backlog' ? 'backlog' : 'board') : hash === '#board' ? 'board' : hash === '#backlog' ? 'backlog' : 'workspace';
+  ++refreshGeneration;
+  tasks.value = [];
   search.value = '';
   priorityFilter.value = 'All priorities';
   endDrag();
+  editingTitle.value = false;
+  if (username.value) void refreshBoard();
+  if (username.value && projectId.value) void refreshTasks();
 }
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncView);
+  syncView();
   try {
     const result = await request<{ user: { username: string } }>('/auth/me');
     username.value = result.user.username;
@@ -233,7 +258,7 @@ onMounted(async () => {
     loading.value = false;
   }
   refreshTimer = setInterval(() => {
-    if (username.value && !busy.value && !draggedTask.value) void refreshTasks();
+    if (username.value && projectId.value && !busy.value && !draggedTask.value) void refreshTasks();
     if (username.value && !editingTitle.value && !titleSaving.value) void refreshBoard();
   }, 15000);
 });
@@ -252,10 +277,47 @@ const filteredTasks = computed(() => {
     [task.title, task.description, task.id, task.assignee, task.label].some((value) => value.toLowerCase().includes(query)),
   );
 });
-const completed = computed(() => tasks.value.filter((task) => task.status === 'Done').length);
 const boardTasks = computed(() => tasks.value.filter((task) => task.status !== 'Backlog'));
 const backlogTasks = computed(() => filteredTasks.value.filter((task) => task.status === 'Backlog'));
-const progress = computed(() => boardTasks.value.length ? Math.round(completed.value / boardTasks.value.length * 100) : 0);
+const projectUrl = (id: string, view: 'board' | 'backlog') => `#project/${id}/${view}`;
+const projectProgress = (project: Project) => project.total ? Math.round(project.completed / project.total * 100) : 0;
+
+async function createProject() {
+  const title = newProjectTitle.value.trim();
+  if (!title) {
+    projectError.value = 'Enter a project name.';
+    return;
+  }
+  projectBusy.value = true;
+  projectError.value = '';
+  try {
+    const result = await request<{ project: Project }>('/projects', { method: 'POST', body: { title } });
+    newProjectTitle.value = '';
+    await refreshBoard();
+    window.location.hash = projectUrl(result.project.id, 'board');
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else projectError.value = message(error);
+  } finally {
+    projectBusy.value = false;
+  }
+}
+
+async function setArchived(project: Project, archived: boolean) {
+  if (archived && !window.confirm(`Archive "${project.title}"? Its tasks will be preserved.`)) return;
+  projectBusy.value = true;
+  projectError.value = '';
+  try {
+    await request(`/projects/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: { title: project.title, version: project.version, archived } });
+    await refreshBoard();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else projectError.value = message(error);
+    if (error instanceof ApiError && error.status === 409) await refreshBoard();
+  } finally {
+    projectBusy.value = false;
+  }
+}
 const dialogVisible = ref(false);
 const editingId = ref<string | null>(null);
 const editingVersion = ref<number | null>(null);
@@ -274,6 +336,8 @@ function openTask(task?: Task, status: Status = 'To do') {
 }
 
 async function saveTask() {
+  if (!projectId.value) return;
+  const projectPath = `/projects/${encodeURIComponent(projectId.value)}/tasks`;
   const title = form.title.trim();
   if (!title) {
     formError.value = 'Give your task a title to continue.';
@@ -291,9 +355,9 @@ async function saveTask() {
   ++refreshGeneration;
   try {
     if (editingId.value) {
-      await request(`/tasks/${editingId.value}`, { method: 'PUT', body: { ...details, version: editingVersion.value } });
+      await request(`${projectPath}/${editingId.value}`, { method: 'PUT', body: { ...details, version: editingVersion.value } });
     } else {
-      await request('/tasks', { method: 'POST', body: details });
+      await request(projectPath, { method: 'POST', body: details });
     }
     dialogVisible.value = false;
     await refreshTasks();
@@ -306,11 +370,11 @@ async function saveTask() {
 }
 
 async function deleteTask() {
-  if (editingId.value && window.confirm('Delete this task? This cannot be undone.')) {
+  if (editingId.value && projectId.value && window.confirm('Delete this task? This cannot be undone.')) {
     busy.value = true;
     ++refreshGeneration;
     try {
-      await request(`/tasks/${editingId.value}`, { method: 'DELETE', body: { version: editingVersion.value } });
+      await request(`/projects/${encodeURIComponent(projectId.value)}/tasks/${editingId.value}`, { method: 'DELETE', body: { version: editingVersion.value } });
       dialogVisible.value = false;
       await refreshTasks();
     } catch (error) {
@@ -334,11 +398,11 @@ async function moveTaskToStatus(task: Task, nextStatus: Status) {
 }
 
 async function updateTask(task: Task, changes: Partial<Pick<Task, 'status' | 'assignee'>>) {
-  if (busy.value) return;
+  if (busy.value || !projectId.value) return;
   busy.value = true;
   ++refreshGeneration;
   try {
-    await request(`/tasks/${task.id}`, { method: 'PUT', body: { ...task, ...changes } });
+    await request(`/projects/${encodeURIComponent(projectId.value)}/tasks/${task.id}`, { method: 'PUT', body: { ...task, ...changes } });
     await refreshTasks();
   } catch (error) {
     handleError(error);
@@ -472,8 +536,19 @@ function avatarClass(name: string) {
       </div>
       <p class="nav-label">WORKSPACE</p>
       <nav aria-label="Workspace navigation">
-        <a class="nav-link" :class="{ active: activeView === 'board' }" href="#board" :aria-current="activeView === 'board' ? 'page' : undefined"><i class="pi pi-th-large" aria-hidden="true"></i> Board <span v-if="activeView === 'board'" class="nav-indicator"></span></a>
-        <a class="nav-link" :class="{ active: activeView === 'backlog' }" href="#backlog" :aria-current="activeView === 'backlog' ? 'page' : undefined"><i class="pi pi-list" aria-hidden="true"></i> Backlog <span v-if="activeView === 'backlog'" class="nav-indicator"></span></a>
+        <a class="nav-link" :class="{ active: activeView === 'workspace' }" href="#workspace" :aria-current="activeView === 'workspace' ? 'page' : undefined"><i class="pi pi-home" aria-hidden="true"></i> Workspace</a>
+        <template v-if="board && activeView !== 'workspace'">
+          <div class="project-sidebar-title">
+            <form v-if="editingTitle" class="project-title-editor" @submit.prevent="saveTitle" @focusout="titleFocusOut" @keydown.esc.prevent="cancelTitleEdit">
+              <input ref="mobileTitleInput" v-model="titleDraft" aria-label="Project title" :aria-invalid="!!titleError" maxlength="120" :disabled="titleSaving">
+              <button type="submit" class="title-save" :disabled="titleSaving">Save</button>
+            </form>
+            <button v-else class="project-title-button" type="button" :aria-label="`${board.title}, edit project title`" @click="editTitle">{{ board.title }} <i class="pi pi-pencil" aria-hidden="true"></i></button>
+            <small v-if="titleError" class="form-error" role="alert">{{ titleError }}</small>
+          </div>
+          <a class="nav-link" :class="{ active: activeView === 'board' }" :href="projectUrl(board.id, 'board')" :aria-current="activeView === 'board' ? 'page' : undefined"><i class="pi pi-th-large" aria-hidden="true"></i> Board</a>
+          <a class="nav-link" :class="{ active: activeView === 'backlog' }" :href="projectUrl(board.id, 'backlog')" :aria-current="activeView === 'backlog' ? 'page' : undefined"><i class="pi pi-list" aria-hidden="true"></i> Backlog</a>
+        </template>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-note">
@@ -490,51 +565,56 @@ function avatarClass(name: string) {
 
     <main class="main">
       <header class="topbar">
-        <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? board?.title : 'Backlog' }}</strong></div>
+        <div class="breadcrumb"><a href="#workspace">Workspace</a><template v-if="activeView !== 'workspace' && board"><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? 'Board' : 'Backlog' }}</strong></template></div>
         <div class="topbar-right"><span class="topbar-label">{{ username }}</span><button class="logout-button" @click="logout">Sign out</button><span class="avatar lavender">{{ initials(username) }}</span></div>
       </header>
       <nav class="mobile-nav" aria-label="Workspace navigation">
-        <a class="nav-link" :class="{ active: activeView === 'board' }" href="#board" :aria-current="activeView === 'board' ? 'page' : undefined"><i class="pi pi-th-large" aria-hidden="true"></i> Board</a>
-        <a class="nav-link" :class="{ active: activeView === 'backlog' }" href="#backlog" :aria-current="activeView === 'backlog' ? 'page' : undefined"><i class="pi pi-list" aria-hidden="true"></i> Backlog</a>
+        <a class="nav-link" :class="{ active: activeView === 'workspace' }" href="#workspace" :aria-current="activeView === 'workspace' ? 'page' : undefined"><i class="pi pi-home" aria-hidden="true"></i> Workspace</a>
+      </nav>
+      <div v-if="board && activeView !== 'workspace'" class="mobile-project-title">
+        <form v-if="editingTitle" class="project-title-editor" @submit.prevent="saveTitle" @focusout="titleFocusOut" @keydown.esc.prevent="cancelTitleEdit">
+          <input ref="titleInput" v-model="titleDraft" aria-label="Project title" :aria-invalid="!!titleError" maxlength="120" :disabled="titleSaving">
+          <button type="submit" class="title-save" :disabled="titleSaving">Save</button>
+        </form>
+        <button v-else class="project-title-button" type="button" :aria-label="`${board.title}, edit project title`" @click="editTitle">{{ board.title }} <i class="pi pi-pencil" aria-hidden="true"></i></button>
+        <small v-if="titleError" class="form-error" role="alert">{{ titleError }}</small>
+      </div>
+      <nav v-if="board && activeView !== 'workspace'" class="mobile-nav mobile-project-nav" aria-label="Project navigation">
+        <a class="nav-link" :class="{ active: activeView === 'board' }" :href="projectUrl(board.id, 'board')" :aria-current="activeView === 'board' ? 'page' : undefined">Board</a>
+        <a class="nav-link" :class="{ active: activeView === 'backlog' }" :href="projectUrl(board.id, 'backlog')" :aria-current="activeView === 'backlog' ? 'page' : undefined">Backlog</a>
       </nav>
       <div class="content" :id="activeView">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
         <div v-if="usersError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load team members: {{ usersError }} <button class="auth-switch board-retry" @click="refreshUsers()">Retry</button></div>
-        <div v-if="boardLoadError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load the board title: {{ boardLoadError }} <button class="auth-switch board-retry" @click="refreshBoard()">Retry</button></div>
-        <div class="page-heading">
-          <div>
-            <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORKSPACE</div>
-            <h1 v-if="activeView === 'backlog'">Backlog<span class="heading-dot">.</span></h1>
-            <div v-else-if="board" class="board-title-area">
-              <form v-if="editingTitle" class="board-title-editor" @submit.prevent="saveTitle" @focusout="titleFocusOut" @keydown.esc.prevent="cancelTitleEdit">
-                <input ref="titleInput" v-model="titleDraft" aria-label="Board title" :aria-invalid="!!titleError" :aria-describedby="titleError ? 'board-title-error' : undefined" maxlength="120" :disabled="titleSaving">
-                <button type="submit" class="title-save" :disabled="titleSaving">Save</button>
-              </form>
-              <h1 v-else><button class="board-title-button" type="button" :aria-label="`${board.title}, edit board title`" @click="editTitle">{{ board.title }}<span class="heading-dot">.</span> <i class="pi pi-pencil" aria-hidden="true"></i></button></h1>
-              <small v-if="titleError" id="board-title-error" class="form-error" role="alert">{{ titleError }}</small>
-            </div>
-            <p>{{ activeView === 'board' ? 'Good things happen when great work comes together.' : 'Keep upcoming work here until it is ready for the board.' }}</p>
+        <div v-if="boardLoadError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load projects: {{ boardLoadError }} <button class="auth-switch board-retry" @click="refreshBoard()">Retry</button></div>
+        <template v-if="activeView === 'workspace'">
+          <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORKSPACE</div><h1>Projects<span class="heading-dot">.</span></h1><p>Your team's active work, all in one place.</p></div></div>
+          <form class="project-create" @submit.prevent="createProject">
+            <label for="new-project">New project</label>
+            <div><InputText id="new-project" v-model="newProjectTitle" placeholder="Project name" maxlength="120" /><Button type="submit" label="Create project" icon="pi pi-plus" :loading="projectBusy" /></div>
+            <small v-if="projectError" class="form-error" role="alert">{{ projectError }}</small>
+          </form>
+          <h2 class="projects-heading">Active projects <span class="task-total">{{ activeProjects.length }}</span></h2>
+          <div class="projects-grid">
+            <article v-for="project in activeProjects" :key="project.id" class="project-card">
+              <a :href="projectUrl(project.id, 'board')" class="project-card-title">{{ project.title }} <i class="pi pi-arrow-right" aria-hidden="true"></i></a>
+              <div class="progress-label"><span>Project progress</span><strong>{{ projectProgress(project) }}%</strong></div>
+              <div class="progress-track" role="progressbar" :aria-label="`${project.title} progress`" :aria-valuenow="projectProgress(project)" aria-valuemin="0" aria-valuemax="100"><div :style="{ width: `${projectProgress(project)}%` }"></div></div>
+              <p>{{ project.completed }} of {{ project.total }} board tasks completed</p>
+              <button class="project-archive" :disabled="projectBusy" @click="setArchived(project, true)">Archive</button>
+            </article>
+            <p v-if="!activeProjects.length && !boardLoadError" class="empty-column">No active projects yet.</p>
           </div>
-          <Button label="Create task" icon="pi pi-plus" class="create-button" @click="openTask(undefined, activeView === 'backlog' ? 'Backlog' : 'To do')" />
-        </div>
-
-        <section v-if="activeView === 'board'" class="overview" aria-label="Project overview">
-          <div class="overview-main">
-            <div class="overview-icon"><i class="pi pi-bolt"></i></div>
-            <div><span class="overview-kicker">THE BIG PICTURE</span><h2>Let's make it happen.</h2><p>A little clarity goes a long way. Here's where your work stands.</p></div>
-          </div>
-          <div class="overview-progress">
-            <div class="progress-label"><span>Project progress</span><strong>{{ progress }}%</strong></div>
-            <div class="progress-track" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100" aria-label="Project progress"><div :style="{ width: `${progress}%` }"></div></div>
-            <p>{{ completed }} of {{ boardTasks.length }} board tasks completed</p>
-          </div>
-        </section>
+          <section v-if="archivedProjects.length" class="archived-projects"><h2 class="projects-heading">Archived projects</h2><div v-for="project in archivedProjects" :key="project.id" class="archived-project"><strong>{{ project.title }}</strong><button class="project-archive" :disabled="projectBusy" @click="setArchived(project, false)">Restore</button></div></section>
+        </template>
+        <template v-else-if="board">
 
         <div class="board-header">
           <div><h2>{{ activeView === 'board' ? 'Board' : 'Backlog' }} <span class="task-total">{{ activeView === 'board' ? boardTasks.length : tasks.length - boardTasks.length }}</span></h2><p>{{ activeView === 'board' ? 'Drag tasks between columns, or use the arrow buttons to move them.' : 'Move tasks to To do when they are ready to work on.' }}</p></div>
           <div class="filters">
             <label class="search-box"><i class="pi pi-search"></i><span class="sr-only">Search tasks</span><input v-model="search" placeholder="Search tasks..." type="search"></label>
             <label class="filter-box"><i class="pi pi-sliders-h"></i><span class="sr-only">Filter by priority</span><select v-model="priorityFilter"><option>All priorities</option><option v-for="priority in priorities" :key="priority">{{ priority }}</option></select><i class="pi pi-angle-down"></i></label>
+            <Button label="Create task" icon="pi pi-plus" class="create-button" @click="openTask(undefined, activeView === 'backlog' ? 'Backlog' : 'To do')" />
           </div>
         </div>
 
@@ -572,6 +652,8 @@ function avatarClass(name: string) {
           </article>
           <div v-if="!backlogTasks.length" class="empty-column">{{ search || priorityFilter !== 'All priorities' ? 'No matching backlog tasks.' : 'Your backlog is empty. Create a task to get started.' }}</div>
         </section>
+        </template>
+        <p v-else-if="!boardLoadError" class="empty-column">Project not found or archived. Return to Workspace to select an active project.</p>
         <footer class="footer"><span>Made for making progress <span class="footer-heart">♥</span></span><span>One task at a time.</span></footer>
       </div>
     </main>
