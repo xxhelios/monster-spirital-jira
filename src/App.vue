@@ -529,11 +529,6 @@ function avatarClass(name: string) {
         <span class="brand-mark"><i class="pi pi-compass"></i></span>
         <span>Monster Spirital Company<span class="brand-dot">.</span></span>
       </a>
-      <div class="workspace-switcher">
-        <div class="workspace-icon">M</div>
-        <div class="workspace-text"><strong>Monster Spirital Company</strong><span>Workspace</span></div>
-        <i class="pi pi-angle-down"></i>
-      </div>
       <p class="nav-label">WORKSPACE</p>
       <nav aria-label="Workspace navigation">
         <a class="nav-link" :class="{ active: activeView === 'workspace' }" href="#workspace" :aria-current="activeView === 'workspace' ? 'page' : undefined"><i class="pi pi-home" aria-hidden="true"></i> Workspace</a>
@@ -583,7 +578,7 @@ function avatarClass(name: string) {
         <a class="nav-link" :class="{ active: activeView === 'board' }" :href="projectUrl(board.id, 'board')" :aria-current="activeView === 'board' ? 'page' : undefined">Board</a>
         <a class="nav-link" :class="{ active: activeView === 'backlog' }" :href="projectUrl(board.id, 'backlog')" :aria-current="activeView === 'backlog' ? 'page' : undefined">Backlog</a>
       </nav>
-      <div class="content" :id="activeView">
+      <div class="content" :class="{ 'project-content': activeView !== 'workspace' }" :id="activeView">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
         <div v-if="usersError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load team members: {{ usersError }} <button class="auth-switch board-retry" @click="refreshUsers()">Retry</button></div>
         <div v-if="boardLoadError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load projects: {{ boardLoadError }} <button class="auth-switch board-retry" @click="refreshBoard()">Retry</button></div>
