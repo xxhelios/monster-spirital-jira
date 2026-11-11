@@ -5,6 +5,7 @@ import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import Textarea from 'primevue/textarea';
+import AssigneeSelect from './AssigneeSelect.vue';
 import { ApiError, request } from './api';
 import { boardStatuses, priorities, statuses, type Priority, type Status, type Task, type TaskDetails } from './tasks';
 
@@ -16,6 +17,10 @@ const authError = ref('');
 const authBusy = ref(false);
 const loading = ref(true);
 const tasks = ref<Task[]>([]);
+const users = ref<string[]>([]);
+const usersError = ref('');
+const usersLoading = ref(false);
+let usersGeneration = 0;
 const board = ref<{ title: string; version: number } | null>(null);
 const boardLoadError = ref('');
 const editingTitle = ref(false);
@@ -45,6 +50,10 @@ function handleError(error: unknown) {
   if (error instanceof ApiError && error.status === 401) {
     username.value = '';
     tasks.value = [];
+    users.value = [];
+    usersError.value = '';
+    ++usersGeneration;
+    usersLoading.value = false;
     board.value = null;
     boardLoadError.value = '';
     editingTitle.value = false;
@@ -52,6 +61,26 @@ function handleError(error: unknown) {
     authError.value = error.message;
   } else {
     notice.value = message(error);
+  }
+}
+
+async function refreshUsers() {
+  const generation = ++usersGeneration;
+  const currentUser = username.value;
+  usersLoading.value = true;
+  try {
+    const result = await request<{ users: { username: string }[] }>('/users');
+    if (generation === usersGeneration && currentUser && username.value === currentUser) {
+      users.value = result.users.map((user) => user.username);
+      usersError.value = '';
+    }
+  } catch (error) {
+    if (generation === usersGeneration && username.value === currentUser) {
+      if (error instanceof ApiError && error.status === 401) handleError(error);
+      else usersError.value = message(error);
+    }
+  } finally {
+    if (generation === usersGeneration) usersLoading.value = false;
   }
 }
 
@@ -157,7 +186,7 @@ async function authenticate() {
     const result = await request<{ user: { username: string } }>(`/auth/${authMode.value}`, { method: 'POST', body: credentials });
     username.value = result.user.username;
     credentials.password = '';
-    await Promise.all([refreshTasks(), refreshBoard()]);
+    await Promise.all([refreshTasks(), refreshBoard(), refreshUsers()]);
   } catch (error) {
     authError.value = message(error);
   } finally {
@@ -170,8 +199,12 @@ async function logout() {
     await request('/auth/logout', { method: 'POST', body: {} });
     ++refreshGeneration;
     ++boardGeneration;
+    ++usersGeneration;
     username.value = '';
     tasks.value = [];
+    users.value = [];
+    usersError.value = '';
+    usersLoading.value = false;
     board.value = null;
     boardLoadError.value = '';
     editingTitle.value = false;
@@ -193,7 +226,7 @@ onMounted(async () => {
   try {
     const result = await request<{ user: { username: string } }>('/auth/me');
     username.value = result.user.username;
-    await Promise.all([refreshTasks(), refreshBoard()]);
+    await Promise.all([refreshTasks(), refreshBoard(), refreshUsers()]);
   } catch (error) {
     if (!(error instanceof ApiError && error.status === 401)) authError.value = message(error);
   } finally {
@@ -237,6 +270,7 @@ function openTask(task?: Task, status: Status = 'To do') {
   Object.assign(form, task ?? { title: '', description: '', status, priority: 'Medium', assignee: '', label: '' });
   formError.value = '';
   dialogVisible.value = true;
+  void refreshUsers();
 }
 
 async function saveTask() {
@@ -295,11 +329,16 @@ async function moveTask(task: Task, direction: number) {
 }
 
 async function moveTaskToStatus(task: Task, nextStatus: Status) {
-  if (task.status === nextStatus || busy.value) return;
+  if (task.status === nextStatus) return;
+  await updateTask(task, { status: nextStatus });
+}
+
+async function updateTask(task: Task, changes: Partial<Pick<Task, 'status' | 'assignee'>>) {
+  if (busy.value) return;
   busy.value = true;
   ++refreshGeneration;
   try {
-    await request(`/tasks/${task.id}`, { method: 'PUT', body: { ...task, status: nextStatus } });
+    await request(`/tasks/${task.id}`, { method: 'PUT', body: { ...task, ...changes } });
     await refreshTasks();
   } catch (error) {
     handleError(error);
@@ -460,6 +499,7 @@ function avatarClass(name: string) {
       </nav>
       <div class="content" :id="activeView">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
+        <div v-if="usersError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load team members: {{ usersError }} <button class="auth-switch board-retry" @click="refreshUsers()">Retry</button></div>
         <div v-if="boardLoadError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load the board title: {{ boardLoadError }} <button class="auth-switch board-retry" @click="refreshBoard()">Retry</button></div>
         <div class="page-heading">
           <div>
@@ -511,7 +551,7 @@ function avatarClass(name: string) {
                 <p class="task-description">{{ task.description || 'No description yet.' }}</p>
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
-                  <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><span>{{ task.assignee || 'Unassigned' }}</span></div>
+                  <div class="assignee"><span class="avatar" :class="avatarClass(task.assignee)">{{ initials(task.assignee) }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="users" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
                   <div class="move-actions"><button v-if="columnIndex > 0" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex - 1]}`" @click="moveTask(task, -1)"><i class="pi pi-arrow-left"></i></button><button v-if="columnIndex < boardStatuses.length - 1" class="icon-button" :disabled="busy" :aria-label="`Move ${task.title} to ${boardStatuses[columnIndex + 1]}`" @click="moveTask(task, 1)"><i class="pi pi-arrow-right"></i></button></div>
                 </div>
               </article>
@@ -526,7 +566,7 @@ function avatarClass(name: string) {
               <span class="task-id">{{ task.id }}</span>
               <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
               <p class="task-description">{{ task.description || 'No description yet.' }}</p>
-              <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span><span class="backlog-assignee">{{ task.assignee || 'Unassigned' }}</span></div>
+              <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span><AssigneeSelect class="assignee-select" :model-value="task.assignee" :users="users" :label="`Assignee for ${task.title}`" :disabled="busy" :loading="usersLoading" @refresh="refreshUsers" @update:model-value="updateTask(task, { assignee: $event })" /></div>
             </div>
             <Button label="Move to To do" icon="pi pi-arrow-right" :disabled="busy" :aria-label="`Move ${task.title} to To do`" @click="moveTaskToStatus(task, 'To do')" />
           </article>
@@ -546,7 +586,7 @@ function avatarClass(name: string) {
         <div class="form-grid">
           <div><label id="status-label" for="task-status">Status</label><Select input-id="task-status" aria-labelledby="status-label" v-model="form.status" :options="[...statuses]" /></div>
           <div><label id="priority-label" for="task-priority">Priority</label><Select input-id="task-priority" aria-labelledby="priority-label" v-model="form.priority" :options="[...priorities]" /></div>
-          <div><label for="task-assignee">Assignee</label><InputText id="task-assignee" v-model="form.assignee" placeholder="e.g. Alex Morgan" maxlength="80" /></div>
+          <div><label id="assignee-label" for="task-assignee">Assignee</label><AssigneeSelect input-id="task-assignee" labelledby="assignee-label" label="Assignee" v-model="form.assignee" :users="users" :loading="usersLoading" @refresh="refreshUsers" /><small v-if="usersError" class="form-error" role="alert">Could not load team members: {{ usersError }} <button type="button" class="auth-switch board-retry" @click="refreshUsers()">Retry</button></small></div>
           <div><label for="task-label">Label</label><InputText id="task-label" v-model="form.label" placeholder="e.g. Design" maxlength="40" /></div>
         </div>
         <div class="dialog-actions">

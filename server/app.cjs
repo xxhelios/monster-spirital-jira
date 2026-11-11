@@ -106,6 +106,10 @@ function createApp(pool, options = {}) {
     res.clearCookie(cookieName, { ...cookieOptions, maxAge: undefined });
     res.json({ ok: true });
   }));
+  app.get('/api/users', authenticate, asyncRoute(async (req, res) => {
+    const result = await pool.query('SELECT username FROM users ORDER BY username');
+    res.json({ users: result.rows });
+  }));
   app.get('/api/board', authenticate, asyncRoute(async (req, res) => {
     const result = await pool.query('SELECT title, version FROM board_settings WHERE id = 1');
     if (!result.rows[0]) throw new Error('Board settings are missing; run the database migration.');

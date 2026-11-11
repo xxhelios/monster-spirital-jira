@@ -41,6 +41,7 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
     return { status: response.status, data: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
   }
   assert.equal((await call('/tasks')).status, 401);
+  assert.equal((await call('/users')).status, 401);
   assert.equal((await call('/board')).status, 401);
   assert.equal((await call('/board', 'PUT', { title: 'Denied', version: 1 })).status, 401);
   const nonJson = await fetch(base + '/auth/login', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
@@ -54,6 +55,7 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   assert.equal((await call('/auth/signup', 'POST', { username: 'ALICE', password: 'longpassword123' })).status, 409);
   const bob = await call('/auth/signup', 'POST', { username: 'Bob', password: 'longpassword456' });
   assert.equal(bob.status, 200);
+  assert.deepEqual((await call('/users', 'GET', undefined, alice.cookie)).data, { users: [{ username: 'alice' }, { username: 'bob' }] });
   const board = await call('/board', 'GET', undefined, alice.cookie);
   assert.deepEqual(board.data.board, { title: 'Project board', version: 1 });
   assert.equal((await call('/board', 'PUT', { title: '   ', version: 1 }, alice.cookie)).status, 400);
