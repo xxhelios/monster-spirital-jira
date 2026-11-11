@@ -41,6 +41,8 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
     return { status: response.status, data: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
   }
   assert.equal((await call('/tasks')).status, 401);
+  assert.equal((await call('/board')).status, 401);
+  assert.equal((await call('/board', 'PUT', { title: 'Denied', version: 1 })).status, 401);
   const nonJson = await fetch(base + '/auth/login', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
   assert.equal(nonJson.status, 415);
   const crossSite = await fetch(base + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }, body: '{}' });
@@ -52,6 +54,16 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   assert.equal((await call('/auth/signup', 'POST', { username: 'ALICE', password: 'longpassword123' })).status, 409);
   const bob = await call('/auth/signup', 'POST', { username: 'Bob', password: 'longpassword456' });
   assert.equal(bob.status, 200);
+  const board = await call('/board', 'GET', undefined, alice.cookie);
+  assert.deepEqual(board.data.board, { title: 'Project board', version: 1 });
+  assert.equal((await call('/board', 'PUT', { title: '   ', version: 1 }, alice.cookie)).status, 400);
+  assert.equal((await call('/board', 'PUT', { title: 'x'.repeat(121), version: 1 }, alice.cookie)).status, 400);
+  assert.equal((await call('/board', 'PUT', { title: 'New board' }, alice.cookie)).status, 400);
+  const renamed = await call('/board', 'PUT', { title: '  Team board  ', version: 1 }, alice.cookie);
+  assert.deepEqual(renamed.data.board, { title: 'Team board', version: 2 });
+  db.public.none("INSERT INTO board_settings (id, title) VALUES (1, 'Project board') ON CONFLICT (id) DO NOTHING");
+  assert.deepEqual((await call('/board', 'GET', undefined, bob.cookie)).data.board, renamed.data.board);
+  assert.equal((await call('/board', 'PUT', { title: 'Old edit', version: 1 }, bob.cookie)).status, 409);
   assert.equal((await call('/auth/login', 'POST', { username: 'alice', password: 'wrongpassword123' })).status, 401);
   const login = await call('/auth/login', 'POST', { username: 'ALICE', password: 'longpassword123' });
   assert.equal(login.status, 200);

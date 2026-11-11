@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
@@ -16,6 +16,16 @@ const authError = ref('');
 const authBusy = ref(false);
 const loading = ref(true);
 const tasks = ref<Task[]>([]);
+const board = ref<{ title: string; version: number } | null>(null);
+const boardLoadError = ref('');
+const editingTitle = ref(false);
+const titleDraft = ref('');
+const titleError = ref('');
+const titleSaving = ref(false);
+const titleInput = ref<HTMLInputElement | null>(null);
+const titleEditVersion = ref<number | null>(null);
+const titleOriginal = ref('');
+let boardGeneration = 0;
 const busy = ref(false);
 const activeView = ref<'board' | 'backlog'>(window.location.hash === '#backlog' ? 'backlog' : 'board');
 const draggedTask = ref<Task | null>(null);
@@ -35,6 +45,9 @@ function handleError(error: unknown) {
   if (error instanceof ApiError && error.status === 401) {
     username.value = '';
     tasks.value = [];
+    board.value = null;
+    boardLoadError.value = '';
+    editingTitle.value = false;
     dialogVisible.value = false;
     authError.value = error.message;
   } else {
@@ -55,6 +68,88 @@ async function refreshTasks() {
   }
 }
 
+async function refreshBoard(force = false) {
+  const generation = ++boardGeneration;
+  const currentUser = username.value;
+  try {
+    const result = await request<{ board: { title: string; version: number } }>('/board');
+    if (generation === boardGeneration && currentUser && username.value === currentUser && (force || !editingTitle.value)) {
+      board.value = result.board;
+      boardLoadError.value = '';
+      return true;
+    }
+  } catch (error) {
+    if (generation === boardGeneration && username.value === currentUser) {
+      if (error instanceof ApiError && error.status === 401) handleError(error);
+      else boardLoadError.value = message(error);
+    }
+  }
+  return false;
+}
+
+async function editTitle() {
+  if (!board.value || titleSaving.value) return;
+  ++boardGeneration;
+  titleDraft.value = board.value.title;
+  titleOriginal.value = board.value.title;
+  titleEditVersion.value = board.value.version;
+  titleError.value = '';
+  editingTitle.value = true;
+  await nextTick();
+  titleInput.value?.focus();
+  titleInput.value?.select();
+}
+
+async function saveTitle() {
+  if (!editingTitle.value || titleSaving.value || !board.value) return;
+  const title = titleDraft.value.trim();
+  if (!title) {
+    titleError.value = 'Enter a board title.';
+    return;
+  }
+  if (title === titleOriginal.value) {
+    editingTitle.value = false;
+    titleError.value = '';
+    return;
+  }
+  titleSaving.value = true;
+  titleError.value = '';
+  const generation = ++boardGeneration;
+  const currentUser = username.value;
+  try {
+    const result = await request<{ board: { title: string; version: number } }>('/board', {
+      method: 'PUT', body: { title, version: titleEditVersion.value },
+    });
+    if (generation === boardGeneration && username.value === currentUser) {
+      board.value = result.board;
+      editingTitle.value = false;
+    }
+  } catch (error) {
+    if (generation !== boardGeneration || username.value !== currentUser) return;
+    if (error instanceof ApiError && error.status === 401) handleError(error);
+    else {
+      titleError.value = message(error);
+      if (error instanceof ApiError && error.status === 409 && await refreshBoard(true) && board.value) {
+        titleEditVersion.value = board.value.version;
+        titleOriginal.value = board.value.title;
+      }
+    }
+  } finally {
+    titleSaving.value = false;
+  }
+}
+
+function titleFocusOut(event: FocusEvent) {
+  if (event.currentTarget instanceof HTMLElement && event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+  void saveTitle();
+}
+
+function cancelTitleEdit() {
+  if (titleSaving.value) return;
+  editingTitle.value = false;
+  titleError.value = '';
+}
+
 async function authenticate() {
   authBusy.value = true;
   authError.value = '';
@@ -62,7 +157,7 @@ async function authenticate() {
     const result = await request<{ user: { username: string } }>(`/auth/${authMode.value}`, { method: 'POST', body: credentials });
     username.value = result.user.username;
     credentials.password = '';
-    await refreshTasks();
+    await Promise.all([refreshTasks(), refreshBoard()]);
   } catch (error) {
     authError.value = message(error);
   } finally {
@@ -74,8 +169,12 @@ async function logout() {
   try {
     await request('/auth/logout', { method: 'POST', body: {} });
     ++refreshGeneration;
+    ++boardGeneration;
     username.value = '';
     tasks.value = [];
+    board.value = null;
+    boardLoadError.value = '';
+    editingTitle.value = false;
     notice.value = '';
   } catch (error) {
     handleError(error);
@@ -94,7 +193,7 @@ onMounted(async () => {
   try {
     const result = await request<{ user: { username: string } }>('/auth/me');
     username.value = result.user.username;
-    await refreshTasks();
+    await Promise.all([refreshTasks(), refreshBoard()]);
   } catch (error) {
     if (!(error instanceof ApiError && error.status === 401)) authError.value = message(error);
   } finally {
@@ -102,6 +201,7 @@ onMounted(async () => {
   }
   refreshTimer = setInterval(() => {
     if (username.value && !busy.value && !draggedTask.value) void refreshTasks();
+    if (username.value && !editingTitle.value && !titleSaving.value) void refreshBoard();
   }, 15000);
 });
 onUnmounted(() => {
@@ -351,7 +451,7 @@ function avatarClass(name: string) {
 
     <main class="main">
       <header class="topbar">
-        <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? 'Project board' : 'Backlog' }}</strong></div>
+        <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ activeView === 'board' ? board?.title : 'Backlog' }}</strong></div>
         <div class="topbar-right"><span class="topbar-label">{{ username }}</span><button class="logout-button" @click="logout">Sign out</button><span class="avatar lavender">{{ initials(username) }}</span></div>
       </header>
       <nav class="mobile-nav" aria-label="Workspace navigation">
@@ -360,10 +460,19 @@ function avatarClass(name: string) {
       </nav>
       <div class="content" :id="activeView">
         <div v-if="notice" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> {{ notice }}</div>
+        <div v-if="boardLoadError" class="notice" role="alert"><i class="pi pi-exclamation-triangle"></i> Could not load the board title: {{ boardLoadError }} <button class="auth-switch board-retry" @click="refreshBoard()">Retry</button></div>
         <div class="page-heading">
           <div>
             <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORKSPACE</div>
-            <h1>{{ activeView === 'board' ? 'Project board' : 'Backlog' }}<span class="heading-dot">.</span></h1>
+            <h1 v-if="activeView === 'backlog'">Backlog<span class="heading-dot">.</span></h1>
+            <div v-else-if="board" class="board-title-area">
+              <form v-if="editingTitle" class="board-title-editor" @submit.prevent="saveTitle" @focusout="titleFocusOut" @keydown.esc.prevent="cancelTitleEdit">
+                <input ref="titleInput" v-model="titleDraft" aria-label="Board title" :aria-invalid="!!titleError" :aria-describedby="titleError ? 'board-title-error' : undefined" maxlength="120" :disabled="titleSaving">
+                <button type="submit" class="title-save" :disabled="titleSaving">Save</button>
+              </form>
+              <h1 v-else><button class="board-title-button" type="button" :aria-label="`${board.title}, edit board title`" @click="editTitle">{{ board.title }}<span class="heading-dot">.</span> <i class="pi pi-pencil" aria-hidden="true"></i></button></h1>
+              <small v-if="titleError" id="board-title-error" class="form-error" role="alert">{{ titleError }}</small>
+            </div>
             <p>{{ activeView === 'board' ? 'Good things happen when great work comes together.' : 'Keep upcoming work here until it is ready for the board.' }}</p>
           </div>
           <Button label="Create task" icon="pi pi-plus" class="create-button" @click="openTask(undefined, activeView === 'backlog' ? 'Backlog' : 'To do')" />

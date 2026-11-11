@@ -13,6 +13,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS board_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  title VARCHAR(120) NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1
+);
+INSERT INTO board_settings (id, title) VALUES (1, 'Project board')
+  ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,
   title VARCHAR(120) NOT NULL,

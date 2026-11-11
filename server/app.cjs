@@ -106,6 +106,20 @@ function createApp(pool, options = {}) {
     res.clearCookie(cookieName, { ...cookieOptions, maxAge: undefined });
     res.json({ ok: true });
   }));
+  app.get('/api/board', authenticate, asyncRoute(async (req, res) => {
+    const result = await pool.query('SELECT title, version FROM board_settings WHERE id = 1');
+    if (!result.rows[0]) throw new Error('Board settings are missing; run the database migration.');
+    res.json({ board: result.rows[0] });
+  }));
+  app.put('/api/board', authenticate, asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body.title !== 'string' || !req.body.title.trim() ||
+      req.body.title.trim().length > 120 || !Number.isSafeInteger(req.body.version) || req.body.version < 1) {
+      return res.status(400).json({ error: 'Board title must be between 1 and 120 characters.' });
+    }
+    const result = await pool.query('UPDATE board_settings SET title = $1, version = version + 1 WHERE id = 1 AND version = $2 RETURNING title, version', [req.body.title.trim(), req.body.version]);
+    if (!result.rowCount) return res.status(409).json({ error: 'The board title was changed by someone else. Review your title and save again.' });
+    res.json({ board: result.rows[0] });
+  }));
   app.get('/api/tasks', authenticate, asyncRoute(async (req, res) => {
     const result = await pool.query('SELECT id, title, description, status, priority, assignee, label, version FROM tasks ORDER BY id');
     res.json({ tasks: result.rows.map(taskFromRow) });

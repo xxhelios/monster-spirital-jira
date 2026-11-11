@@ -33,4 +33,6 @@ Tasks and their status are shared through PostgreSQL. The board refreshes every 
 
 Use the Backlog tab to create and collect upcoming tasks. Select **Move to To do** when a task is ready for the board. To return a task to the backlog, edit it and change its status to Backlog. The board's task count and progress exclude backlog tasks.
 
+Click the board title to rename it for everyone. Save with the button, Enter, or by clicking outside; Escape cancels. If someone else changes the name at the same time, review your draft and save again.
+
 Drag a task to another column to change its status. On touchscreens, drag using the handle in the task's top-right corner. The arrow buttons provide an alternative for keyboard and touch users. Dragging does not reorder tasks within a column.
