@@ -839,7 +839,7 @@ function ticketColor(name: string) {
               <article v-for="task in filteredTasks.filter((item) => item.status === status)" :key="task.id" class="task-card" :class="[ticketColor(task.assignee), { 'task-dragging': draggedTask?.id === task.id }]" :draggable="!busy" @dblclick="doubleClickTask(task, $event)" @dragstart="startDrag(task, $event)" @dragend="endDrag">
                 <div class="card-top"><span class="task-id">{{ task.id }}</span><div class="card-controls"><span class="drag-handle" aria-hidden="true" title="Drag to move" @touchstart.prevent="startTouchDrag(task, $event)" @touchmove.prevent="moveTouchDrag" @touchend.prevent="endTouchDrag" @touchcancel="endDrag"><i class="pi pi-bars"></i></span><button class="icon-button edit-button" :aria-label="`Edit ${task.title}`" @click="openTask(task)"><i class="pi pi-ellipsis-h"></i></button></div></div>
                 <button class="task-title" @click="openTask(task)">{{ task.title }}</button>
-                <p class="task-description">{{ task.description || 'No description yet.' }}</p>
+                <p class="task-description" :tabindex="task.description ? 0 : undefined" :role="task.description ? 'region' : undefined" :aria-label="task.description ? `Description for ${task.title}` : undefined">{{ task.description || 'No description yet.' }}</p>
                 <div class="card-tags"><span v-if="task.label" class="tag category-tag">{{ task.label }}</span><span class="tag priority-tag" :class="`priority-${task.priority.toLowerCase()}`"><i class="pi pi-flag-fill"></i>{{ task.priority }}</span></div>
                 <div class="card-footer">
                   <span class="avatar" :class="avatarClass(task.assignee)" role="img" :aria-label="task.assignee ? `Assigned to ${task.assignee}` : 'Unassigned'" :title="task.assignee || 'Unassigned'">{{ initials(task.assignee) }}</span>
@@ -910,7 +910,7 @@ function ticketColor(name: string) {
         <InputText id="task-title" v-model="form.title" autofocus placeholder="What needs to be done?" maxlength="120" :aria-invalid="!!formError" />
         <small v-if="formError" class="form-error" role="alert">{{ formError }}</small>
         <label for="task-description">Description</label>
-        <Textarea id="task-description" v-model="form.description" rows="3" placeholder="Add a little more detail..." maxlength="1000" />
+        <Textarea id="task-description" v-model="form.description" rows="3" auto-resize placeholder="Add a little more detail..." maxlength="1000" />
         <div class="form-grid">
           <div><label id="status-label" for="task-status">Status</label><Select input-id="task-status" aria-labelledby="status-label" v-model="form.status" :options="[...statuses]" /></div>
           <div><label id="priority-label" for="task-priority">Priority</label><Select input-id="task-priority" aria-labelledby="priority-label" v-model="form.priority" :options="[...priorities]" /></div>

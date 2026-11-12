@@ -286,14 +286,16 @@ test('accounts share tasks, sessions are protected, and conflicting updates are 
   assert.equal(returned.data.task.status, 'Backlog');
   assert.equal((await call(`/projects/default/tasks/${backlog.data.task.id}`, 'DELETE', { version: returned.data.task.version }, alice.cookie)).status, 200);
   assert.equal((await call('/projects/default/tasks', 'POST', { ...task, status: 'invalid' }, alice.cookie)).status, 400);
-  const created = await call('/projects/default/tasks', 'POST', task, alice.cookie);
+  const created = await call('/projects/default/tasks', 'POST', { ...task, description: 'First line\n\nSecond line' }, alice.cookie);
   assert.equal(created.status, 201);
   assert.equal(created.data.task.id, 'MSC-0002');
   const shared = await call('/projects/default/tasks', 'GET', undefined, bob.cookie);
   assert.equal(shared.data.tasks.length, 1);
   assert.equal(shared.data.tasks[0].title, 'Shared work');
-  const updated = await call(`/projects/default/tasks/${created.data.task.id}`, 'PUT', { ...created.data.task, status: 'In progress' }, bob.cookie);
+  assert.equal(shared.data.tasks[0].description, 'First line\n\nSecond line');
+  const updated = await call(`/projects/default/tasks/${created.data.task.id}`, 'PUT', { ...created.data.task, status: 'In progress', description: 'Updated line\nAnother line' }, bob.cookie);
   assert.equal(updated.data.task.version, 2);
+  assert.equal((await call('/projects/default/tasks', 'GET', undefined, alice.cookie)).data.tasks[0].description, 'Updated line\nAnother line');
   const review = await call(`/projects/default/tasks/${created.data.task.id}`, 'PUT', { ...updated.data.task, status: 'In Review' }, alice.cookie);
   assert.equal(review.status, 200);
   assert.equal(review.data.task.status, 'In Review');
